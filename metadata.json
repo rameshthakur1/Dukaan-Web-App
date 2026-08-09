@@ -1,0 +1,6 @@
+{
+  "name": "Dukaan Retail Billing & POS",
+  "description": "Smart retail POS, inventory, purchase logging, Udharo khata ledger, and analytics web application with Nepal geographic address profile.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
