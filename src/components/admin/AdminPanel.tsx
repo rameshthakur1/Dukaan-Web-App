@@ -28,6 +28,7 @@ import {
   Eye,
   Send,
   BarChart3,
+  BookOpen,
   Globe,
   Megaphone,
   MapPin,
@@ -76,6 +77,100 @@ const getInitials = (name: string) => {
   return name.slice(0, 2).toUpperCase();
 };
 
+const LandingContentEditor: React.FC = () => {
+  const { aboutUsText, updateAboutUsText, ourMissionText, updateOurMissionText } = useApp();
+  const [aboutUsInput, setAboutUsInput] = useState(aboutUsText);
+  const [ourMissionInput, setOurMissionInput] = useState(ourMissionText);
+  const [saveNotice, setSaveNotice] = useState(false);
+
+  useEffect(() => {
+    setAboutUsInput(aboutUsText);
+    setOurMissionInput(ourMissionText);
+  }, [aboutUsText, ourMissionText]);
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateAboutUsText(aboutUsInput.trim());
+    updateOurMissionText(ourMissionInput.trim());
+    setSaveNotice(true);
+    setTimeout(() => setSaveNotice(false), 3000);
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+          <div>
+            <h3 className="text-xl font-black text-white flex items-center gap-2">
+              <BookOpen className="h-6 w-6 text-blue-400" />
+              <span>Landing Page: About Us & Our Mission Editor</span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-1">
+              Update the text displayed on the public landing page. Changes update automatically across the platform in real time.
+            </p>
+          </div>
+        </div>
+
+        {saveNotice && (
+          <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+            <span>About Us & Our Mission texts successfully updated! Landing page synced automatically.</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSave} className="space-y-6">
+          <div className="space-y-2">
+            <label className="block text-xs font-bold text-slate-300 uppercase tracking-wide flex items-center gap-1.5">
+              <BookOpen className="h-4 w-4 text-blue-400" />
+              <span>About Us Section Content</span>
+            </label>
+            <textarea
+              rows={6}
+              value={aboutUsInput}
+              onChange={(e) => setAboutUsInput(e.target.value)}
+              className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm text-white placeholder:text-slate-600 outline-none focus:border-blue-500 font-medium leading-relaxed"
+              placeholder="Enter About Us description..."
+              required
+            />
+            <p className="text-[11px] text-slate-500">
+              Descriptive overview of Dukaan.io, its target merchants, and core retail management capabilities.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-xs font-bold text-slate-300 uppercase tracking-wide flex items-center gap-1.5">
+              <Sparkles className="h-4 w-4 text-emerald-400" />
+              <span>Our Mission Section Content</span>
+            </label>
+            <textarea
+              rows={6}
+              value={ourMissionInput}
+              onChange={(e) => setOurMissionInput(e.target.value)}
+              className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 text-sm text-white placeholder:text-slate-600 outline-none focus:border-emerald-500 font-medium leading-relaxed"
+              placeholder="Enter Our Mission description..."
+              required
+            />
+            <p className="text-[11px] text-slate-500">
+              Core mission statement focusing on digital empowerment for local store owners and retail merchants.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
+            <button
+              type="submit"
+              className="px-6 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-extrabold text-sm shadow-lg shadow-blue-600/30 transition active:scale-95 flex items-center gap-2 cursor-pointer"
+              id="save-landing-content-btn"
+            >
+              <Save className="h-4 w-4" />
+              <span>Save & Publish Automatically</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 export const AdminPanel: React.FC = () => {
   const {
     currentUser,
@@ -118,6 +213,10 @@ export const AdminPanel: React.FC = () => {
     updateReferralRewardRule,
     updateUserPassword,
     changeCurrentPassword,
+    aboutUsText,
+    updateAboutUsText,
+    ourMissionText,
+    updateOurMissionText,
   } = useApp();
 
   const [isAdminMenuOpen, setIsAdminMenuOpen] = useState<boolean>(false);
@@ -629,6 +728,11 @@ export const AdminPanel: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12">
+      {/* SUB TAB: LANDING CONTENT */}
+      {activeAdminSubTab === 'LANDING_CONTENT' && (
+        <LandingContentEditor />
+      )}
+
       {/* SUB TAB 1: STORE REGISTRY & ACCOUNT OPERATIONS */}
       {activeAdminSubTab === 'STORES' && (
         <div className="space-y-6">

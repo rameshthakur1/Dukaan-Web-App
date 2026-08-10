@@ -202,6 +202,7 @@ export const Sidebar: React.FC = () => {
               { id: 'COMMUNICATION' as const, label: 'Support & Broadcasts', icon: Headphones, badge: newSupportMessagesCount > 0 ? newSupportMessagesCount : undefined },
               { id: 'PRICING' as const, label: 'Subscription Pricing', icon: CreditCard },
               { id: 'STAFF_IDS' as const, label: 'Staff IDs Requests', icon: Users, badge: pendingStaffRequestsCount > 0 ? pendingStaffRequestsCount : undefined },
+              { id: 'LANDING_CONTENT' as const, label: 'About Us & Mission', icon: BookOpen },
             ];
 
             return (

@@ -274,11 +274,17 @@ interface AppContextType {
   // Admin View Mode & Impersonation ("View As Store")
   adminViewMode: 'ADMIN_ONLY' | 'DEMO_STORE';
   setAdminViewMode: (mode: 'ADMIN_ONLY' | 'DEMO_STORE') => void;
-  activeAdminSubTab: 'STORES' | 'ANALYTICS' | 'COMMUNICATION' | 'PRICING' | 'STAFF_IDS';
-  setActiveAdminSubTab: (tab: 'STORES' | 'ANALYTICS' | 'COMMUNICATION' | 'PRICING' | 'STAFF_IDS') => void;
+  activeAdminSubTab: 'STORES' | 'ANALYTICS' | 'COMMUNICATION' | 'PRICING' | 'STAFF_IDS' | 'LANDING_CONTENT';
+  setActiveAdminSubTab: (tab: 'STORES' | 'ANALYTICS' | 'COMMUNICATION' | 'PRICING' | 'STAFF_IDS' | 'LANDING_CONTENT') => void;
   impersonatedUser: AuthUser | null;
   startImpersonatingStore: (user: AuthUser) => void;
   stopImpersonatingStore: () => void;
+
+  // About Us & Our Mission dynamic content managed by Admin
+  aboutUsText: string;
+  updateAboutUsText: (text: string) => void;
+  ourMissionText: string;
+  updateOurMissionText: (text: string) => void;
 
   // System Announcements Broadcasts
   systemAnnouncements: SystemAnnouncement[];
@@ -329,7 +335,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return 'ADMIN_ONLY';
   });
 
-  const [activeAdminSubTab, setActiveAdminSubTab] = useState<'STORES' | 'ANALYTICS' | 'COMMUNICATION' | 'PRICING' | 'STAFF_IDS'>('STORES');
+  const [activeAdminSubTab, setActiveAdminSubTab] = useState<'STORES' | 'ANALYTICS' | 'COMMUNICATION' | 'PRICING' | 'STAFF_IDS' | 'LANDING_CONTENT'>('STORES');
+
+  const [aboutUsText, setAboutUsText] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('dukaan_about_us_text');
+      if (saved) return saved;
+    } catch (e) {
+      console.error(e);
+    }
+    return "Dukaan.io is Nepal's leading next-generation retail management and POS platform designed specifically for grocery stores, departmental supermarkets, electronics retailers, pharmacies, and wholesale merchants. We empower shop owners to streamline billing, manage customer Udharo Khata credits, track staff attendance and payroll, and monitor real-time profit analytics with ease—all backed by secure offline-first storage and instant thermal receipt printing.";
+  });
+
+  const [ourMissionText, setOurMissionText] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('dukaan_our_mission_text');
+      if (saved) return saved;
+    } catch (e) {
+      console.error(e);
+    }
+    return "Our mission is to digitally empower every local shop and retail entrepreneur with enterprise-grade technology that is fast, reliable, and incredibly easy to use. By eliminating manual paperwork, reducing inventory shrinkage, and simplifying financial record-keeping, we help businesses grow faster, serve customers better, and achieve financial clarity.";
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dukaan_about_us_text', aboutUsText);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [aboutUsText]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('dukaan_our_mission_text', ourMissionText);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [ourMissionText]);
+
+  const updateAboutUsText = (text: string) => setAboutUsText(text);
+  const updateOurMissionText = (text: string) => setOurMissionText(text);
 
   const setAdminViewMode = (mode: 'ADMIN_ONLY' | 'DEMO_STORE') => {
     setAdminViewModeState(mode);
@@ -4250,6 +4295,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         impersonatedUser,
         startImpersonatingStore,
         stopImpersonatingStore,
+
+        aboutUsText,
+        updateAboutUsText,
+        ourMissionText,
+        updateOurMissionText,
 
         systemAnnouncements,
         addSystemAnnouncement,

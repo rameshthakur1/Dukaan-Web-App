@@ -38,7 +38,7 @@ import {
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
-  const { login, registerUser, planPrices, planFeatures, validateCoupon, registeredUsers, updateUserPassword } = useApp();
+  const { login, registerUser, planPrices, planFeatures, validateCoupon, registeredUsers, updateUserPassword, aboutUsText, ourMissionText } = useApp();
 
   const formatPrice = (val: number | undefined | null) => {
     if (val === undefined || val === null || isNaN(val)) return '0';
@@ -742,6 +742,8 @@ export const LoginPage: React.FC = () => {
 
           {/* Quick Section Nav Links */}
           <nav className="hidden md:flex items-center gap-6 text-xs font-bold text-slate-300">
+            <a href="#about-us" className="hover:text-blue-400 transition">About Us</a>
+            <a href="#our-mission" className="hover:text-blue-400 transition">Our Mission</a>
             <a href="#features" className="hover:text-blue-400 transition">Features</a>
             <a href="#detailed-breakdown" className="hover:text-blue-400 transition">Detailed Capabilities</a>
             <a href="#pricing" className="hover:text-blue-400 transition">Pricing Plans</a>
@@ -852,6 +854,31 @@ export const LoginPage: React.FC = () => {
                 <p className="text-[10px] text-slate-400">Secure Store Verification</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* ABOUT US & OUR MISSION SECTIONS */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-6">
+          <div id="about-us" className="p-8 rounded-3xl bg-slate-900/80 border border-slate-800 space-y-4 shadow-xl scroll-mt-28">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-bold">
+              <BookOpen className="h-4 w-4" />
+              <span>About Us</span>
+            </div>
+            <h3 className="text-2xl font-black text-white tracking-tight">Who We Are & What We Do</h3>
+            <p className="text-sm text-slate-300 leading-relaxed font-normal whitespace-pre-line">
+              {aboutUsText}
+            </p>
+          </div>
+
+          <div id="our-mission" className="p-8 rounded-3xl bg-slate-900/80 border border-slate-800 space-y-4 shadow-xl scroll-mt-28">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">
+              <Sparkles className="h-4 w-4" />
+              <span>Our Mission</span>
+            </div>
+            <h3 className="text-2xl font-black text-white tracking-tight">Empowering Retail Entrepreneurs</h3>
+            <p className="text-sm text-slate-300 leading-relaxed font-normal whitespace-pre-line">
+              {ourMissionText}
+            </p>
           </div>
         </div>
 
