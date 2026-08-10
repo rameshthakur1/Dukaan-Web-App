@@ -315,10 +315,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const toggleSidebar = () => setIsSidebarHidden((prev) => !prev);
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState<boolean>(false);
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    try {
+      const savedUserId = localStorage.getItem('dukaan_current_user_id');
+      const stored = localStorage.getItem('dukaan_is_authenticated');
+      if (stored === 'true' && (savedUserId === 'USR-SUPERADMIN' || localStorage.getItem('dukaan_admin_view_mode') === 'ADMIN_ONLY')) {
+        return 'admin_panel';
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return 'dashboard';
+  });
 
   const [adminViewMode, setAdminViewModeState] = useState<'ADMIN_ONLY' | 'DEMO_STORE'>(() => {
     try {
+      const savedUserId = localStorage.getItem('dukaan_current_user_id');
+      if (savedUserId === 'USR-SUPERADMIN') {
+        return 'ADMIN_ONLY';
+      }
       const saved = localStorage.getItem('dukaan_admin_view_mode');
       if (saved === 'DEMO_STORE' || saved === 'ADMIN_ONLY') {
         return saved;
@@ -1385,7 +1400,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Direct superadmin bypass
     if (
-      (cleanUser === 'admin@dukan' || cleanUser === 'admin' || cleanUser === 'superadmin' || cleanUser === 'admin@dukaan.com' || cleanUser === 'admin@dukan.np') &&
+      (cleanUser === 'admin@dukan' || cleanUser === 'admin' || cleanUser === 'superadmin' || cleanUser === 'admin@dukaan.com' || cleanUser === 'admin@dukan.np' || cleanUser === 'usr-superadmin') &&
       (cleanPass === 'admin123' || cleanPass === 'demo123' || cleanPass === 'admin' || cleanPass === 'admin@dukan')
     ) {
       const superAdmin = registeredUsers.find((u) => u.role === 'SUPER_ADMIN') || INITIAL_REGISTERED_USERS[0];
@@ -1397,12 +1412,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsAuthenticated(true);
       setCurrentUser(activeAdmin);
       setCurrentStaff(null);
+      setAdminViewModeState('ADMIN_ONLY');
+      setActiveTab('admin_panel');
       localStorage.setItem('dukaan_is_authenticated', 'true');
       localStorage.setItem('dukaan_current_user_id', activeAdmin.id);
       localStorage.removeItem('dukaan_current_staff');
-      if (adminViewMode === 'ADMIN_ONLY') {
-        setActiveTab('admin_panel');
-      }
+      localStorage.setItem('dukaan_admin_view_mode', 'ADMIN_ONLY');
       return { success: true };
     }
 
@@ -1494,6 +1509,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setIsAuthenticated(true);
     setCurrentUser(matchedUser);
     setCurrentStaff(null);
+    if (matchedUser.role === 'SUPER_ADMIN' || matchedUser.id === 'USR-SUPERADMIN') {
+      setAdminViewModeState('ADMIN_ONLY');
+      setActiveTab('admin_panel');
+      localStorage.setItem('dukaan_admin_view_mode', 'ADMIN_ONLY');
+    }
     localStorage.setItem('dukaan_is_authenticated', 'true');
     localStorage.setItem('dukaan_current_user_id', matchedUser.id);
     localStorage.removeItem('dukaan_current_staff');
