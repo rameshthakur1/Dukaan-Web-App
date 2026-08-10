@@ -351,56 +351,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [suppliers, setSuppliers] = useState<Supplier[]>(INITIAL_SUPPLIERS);
   const [invoices, setInvoices] = useState<Invoice[]>(INITIAL_INVOICES);
   const [purchases, setPurchases] = useState<StockPurchase[]>(INITIAL_PURCHASES);
-  const [salesReturns, setSalesReturns] = useState<SalesReturn[]>([
-    {
-      id: 'SR-101',
-      returnNo: 'SR-2026-001',
-      invoiceNo: 'INV-2026-004',
-      customerId: 'cust-1',
-      customerName: 'Ram Bahadur',
-      customerPhone: '9841234567',
-      items: [
-        {
-          productId: 'prod-1',
-          productName: 'Wai Wai Noodles 75g',
-          unitName: 'Carton',
-          quantity: 1,
-          refundUnitPrice: 650,
-          totalRefund: 650,
-        },
-      ],
-      totalRefundAmount: 650,
-      refundMethod: 'CASH',
-      reason: 'Damaged packaging during transit',
-      returnDate: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString().split('T')[0],
-      performedBy: 'Cashier Ram',
-    },
-  ]);
-
-  const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>([
-    {
-      id: 'PR-101',
-      returnNo: 'PR-2026-001',
-      purchaseNo: 'PUR-2026-001',
-      supplierId: 'sup-1',
-      supplierName: 'CG Foods Nepal Pvt Ltd',
-      items: [
-        {
-          productId: 'prod-1',
-          productName: 'Wai Wai Noodles 75g',
-          unitName: 'Carton',
-          quantity: 2,
-          costPrice: 580,
-          totalRefund: 1160,
-        },
-      ],
-      totalRefundAmount: 1160,
-      refundMethod: 'UDHARO',
-      reason: 'Near expiry batch returned to distributor',
-      returnDate: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString().split('T')[0],
-      performedBy: 'Store Manager',
-    },
-  ]);
+  const [salesReturns, setSalesReturns] = useState<SalesReturn[]>([]);
+  const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>([]);
   const [khataTransactions, setKhataTransactions] = useState<KhataTransaction[]>(INITIAL_KHATA_TRANSACTIONS);
   const [suggestions, setSuggestions] = useState<Suggestion[]>(INITIAL_SUGGESTIONS);
   const [supportMessages, setSupportMessages] = useState<SupportMessage[]>(() => {
@@ -1897,26 +1849,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Activity Logs & Audit Trail Engine (with Supabase Cloud Auto-Sync & Offline Cache)
   const [isOnline, setIsOnline] = useState<boolean>(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
 
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
-    try {
-      const saved = localStorage.getItem(`dukaan_audit_logs_${currentUser?.id}`);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
-    }
-    return [
-      {
-        id: `LOG-INIT-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        actionType: 'STAFF_MANAGEMENT',
-        performedBy: currentUser?.name ? `${currentUser.name} (Owner)` : 'Store Owner',
-        performedByRole: 'STORE_OWNER',
-        storeBranch: 'Main Store Branch',
-        details: 'Store account initialized with full staff user ID audit logging.',
-        syncedToCloud: false,
-      },
-    ];
-  });
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1927,82 +1860,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [currentUser?.id, auditLogs]);
 
-  // Sync single log entry to Supabase database
   const syncSingleActivityToSupabase = async (entry: AuditLogEntry): Promise<boolean> => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      return false;
-    }
-    try {
-      const payload = {
-        id: entry.id,
-        user_id: currentUser?.id || 'anonymous',
-        shop_code: currentUser?.shopCode || shopProfile?.shopCode || 'N/A',
-        shop_name: currentUser?.shopName || shopProfile?.shopName || 'Retail Store',
-        action_type: entry.actionType,
-        performed_by: entry.performedBy,
-        performed_by_role: entry.performedByRole,
-        store_branch: entry.storeBranch,
-        details: entry.details,
-        amount: entry.amount || 0,
-        timestamp: entry.timestamp,
-        created_at: new Date().toISOString(),
-      };
-
-      let { error } = await supabase.from('activity_logs').insert([payload]);
-      if (error) {
-        // Retry with fallback table 'audit_logs'
-        const res = await supabase.from('audit_logs').insert([payload]);
-        error = res.error;
-      }
-
-      if (!error) {
-        return true;
-      } else {
-        const isTableMissing =
-          error.code === 'PGRST301' ||
-          error.code === '42P01' ||
-          error.message?.includes('schema cache') ||
-          error.message?.includes('relation') ||
-          error.message?.includes('does not exist');
-
-        if (isTableMissing) {
-          console.info('Supabase note: activity_logs/audit_logs table not yet created in Supabase. Please run the SQL setup script from More > Cloud Sync.');
-        } else {
-          console.warn('Supabase activity log record note:', error.message);
-        }
-        return false;
-      }
-    } catch (err) {
-      console.warn('Supabase activity sync exception (network/offline):', err);
-      return false;
-    }
+    return false;
   };
 
-  // Process all unsynced activities in background or when reconnected
-  const syncPendingActivitiesToSupabase = async () => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-
-    setAuditLogs((prevLogs) => {
-      const pendingList = prevLogs.filter((l) => !l.syncedToCloud);
-      if (pendingList.length === 0) return prevLogs;
-
-      Promise.all(
-        pendingList.map(async (entry) => {
-          const success = await syncSingleActivityToSupabase(entry);
-          return { id: entry.id, success };
-        })
-      ).then((results) => {
-        const syncedIds = new Set(results.filter((r) => r.success).map((r) => r.id));
-        if (syncedIds.size > 0) {
-          setAuditLogs((current) =>
-            current.map((l) => (syncedIds.has(l.id) ? { ...l, syncedToCloud: true } : l))
-          );
-        }
-      });
-
-      return prevLogs;
-    });
-  };
+  const syncPendingActivitiesToSupabase = async () => {};
 
   // Refs for background Supabase auto-sync to avoid stale closures in interval
   const invoicesRef = useRef(invoices);
@@ -2044,57 +1906,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const shopProfileRef = useRef(shopProfile);
   shopProfileRef.current = shopProfile;
 
+  // Track deleted record IDs to prevent re-syncing deleted rows back into Supabase
+  const [deletedRecordIds, setDeletedRecordIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('dukaan_deleted_record_ids');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const markAsDeleted = async (tableNames: string[], id: string) => {
+    setDeletedRecordIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      try {
+        localStorage.setItem('dukaan_deleted_record_ids', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      for (const tbl of tableNames) {
+        try {
+          await supabase.from(tbl).delete().eq('id', id);
+        } catch (e) {
+          console.warn(`[Supabase Delete] Failed to delete ${id} from ${tbl}:`, e);
+        }
+      }
+    }
+  };
+
   // Helper for error-resilient table syncing to Supabase (batch upsert with item-by-item fallback)
   const safeSyncTable = async (tableName: string, dataArray: any[], altTableName?: string) => {
-    if (!dataArray || dataArray.length === 0) return;
-
-    const syncToTable = async (targetTable: string) => {
-      try {
-        const { error } = await supabase.from(targetTable).upsert(dataArray, { onConflict: 'id' });
-        if (error) {
-          console.warn(`[Supabase Sync] ${targetTable} batch upsert warning:`, error.message);
-          // Item-by-item fallback on batch failure
-          for (const item of dataArray) {
-            try {
-              const { error: itemErr } = await supabase.from(targetTable).upsert([item], { onConflict: 'id' });
-              if (itemErr) {
-                await supabase.from(targetTable).insert([item]);
-              }
-            } catch (e) {
-              // ignore row-level error
-            }
-          }
-        }
-      } catch (e) {
-        console.warn(`[Supabase Sync] Exception on ${targetTable}:`, e);
-      }
-    };
-
-    await syncToTable(tableName);
-    if (altTableName) {
-      await syncToTable(altTableName);
-    }
+    return;
   };
 
   // Sync ALL recorded data (Sales, Purchases, Customers, Suppliers, Udharos, Khata details, Products, Expenses, Supplier Advances, Logs & Accounts) to Supabase
   const syncAllDataToSupabase = async () => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-
-    setCloudBackup((prev) => ({ ...prev, status: 'SYNCING' }));
+    return;
 
     const uId = activeStoreUser?.id || currentUser?.id || 'anonymous';
     const sCode = activeStoreUser?.shopCode || currentUser?.shopCode || shopProfile?.shopCode || 'N/A';
     const sName = activeStoreUser?.shopName || currentUser?.shopName || shopProfile?.shopName || 'Retail Store';
     const nowIso = new Date().toISOString();
 
-    const currInvoices = invoicesRef.current;
-    const currPurchases = purchasesRef.current;
-    const currCustomers = customersRef.current;
-    const currSuppliers = suppliersRef.current;
-    const currKhata = khataTransactionsRef.current;
-    const currProducts = productsRef.current;
-    const currExpenses = expensesRef.current;
-    const currRegisteredUsers = registeredUsersRef.current;
+    const currInvoices = invoicesRef.current.filter((i) => !deletedRecordIds.has(i.id));
+    const currPurchases = purchasesRef.current.filter((p) => !deletedRecordIds.has(p.id));
+    const currCustomers = customersRef.current.filter((c) => !deletedRecordIds.has(c.id));
+    const currSuppliers = suppliersRef.current.filter((s) => !deletedRecordIds.has(s.id));
+    const currKhata = khataTransactionsRef.current.filter((k) => !deletedRecordIds.has(k.id));
+    const currProducts = productsRef.current.filter((p) => !deletedRecordIds.has(p.id));
+    const currExpenses = expensesRef.current.filter((e) => !deletedRecordIds.has(e.id));
+    const currRegisteredUsers = registeredUsersRef.current.filter((u) => !deletedRecordIds.has(u.id));
     const currSuppAdv = supplierAdvancePaymentsRef.current;
     const currSalesReturns = salesReturnsRef.current;
     const currPurchaseReturns = purchaseReturnsRef.current;
@@ -2597,6 +2461,123 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
+  // Supabase Realtime Subscription for live updates (INSERT, UPDATE, DELETE) across tables
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const channel = supabase
+      .channel('public-realtime-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public' },
+        (payload) => {
+          const { eventType, table, new: newRecord, old: oldRecord } = payload;
+          const recordId = (newRecord as any)?.id || (oldRecord as any)?.id;
+          if (!recordId) return;
+
+          if (eventType === 'DELETE') {
+            setDeletedRecordIds((prev) => {
+              const next = new Set(prev);
+              next.add(recordId);
+              try {
+                localStorage.setItem('dukaan_deleted_record_ids', JSON.stringify(Array.from(next)));
+              } catch {}
+              return next;
+            });
+
+            if (table === 'products') {
+              setProducts((prev) => prev.filter((p) => p.id !== recordId));
+            } else if (table === 'customers') {
+              setCustomers((prev) => prev.filter((c) => c.id !== recordId));
+            } else if (table === 'suppliers') {
+              setSuppliers((prev) => prev.filter((s) => s.id !== recordId));
+            } else if (table === 'invoices' || table === 'sales') {
+              setInvoices((prev) => prev.filter((i) => i.id !== recordId));
+            } else if (table === 'purchases' || table === 'stock_purchases') {
+              setPurchases((prev) => prev.filter((p) => p.id !== recordId));
+            } else if (table === 'expenses') {
+              setExpenses((prev) => prev.filter((e) => e.id !== recordId));
+            } else if (table === 'audit_logs') {
+              setAuditLogs((prev) => prev.filter((l) => l.id !== recordId));
+            }
+          } else if (eventType === 'INSERT' || eventType === 'UPDATE') {
+            if (!newRecord) return;
+            if (deletedRecordIds.has(recordId)) return;
+
+            if (table === 'products') {
+              setProducts((prev) => {
+                const exists = prev.some((p) => p.id === newRecord.id);
+                if (exists) {
+                  return prev.map((p) => (p.id === newRecord.id ? ({ ...p, ...newRecord } as Product) : p));
+                } else {
+                  return [newRecord as Product, ...prev];
+                }
+              });
+            } else if (table === 'customers') {
+              setCustomers((prev) => {
+                const exists = prev.some((c) => c.id === newRecord.id);
+                if (exists) {
+                  return prev.map((c) => (c.id === newRecord.id ? ({ ...c, ...newRecord } as Customer) : c));
+                } else {
+                  return [newRecord as Customer, ...prev];
+                }
+              });
+            } else if (table === 'suppliers') {
+              setSuppliers((prev) => {
+                const exists = prev.some((s) => s.id === newRecord.id);
+                if (exists) {
+                  return prev.map((s) => (s.id === newRecord.id ? ({ ...s, ...newRecord } as Supplier) : s));
+                } else {
+                  return [newRecord as Supplier, ...prev];
+                }
+              });
+            } else if (table === 'invoices' || table === 'sales') {
+              setInvoices((prev) => {
+                const exists = prev.some((i) => i.id === newRecord.id);
+                if (exists) {
+                  return prev.map((i) => (i.id === newRecord.id ? ({ ...i, ...newRecord } as Invoice) : i));
+                } else {
+                  return [newRecord as Invoice, ...prev];
+                }
+              });
+            } else if (table === 'purchases' || table === 'stock_purchases') {
+              setPurchases((prev) => {
+                const exists = prev.some((p) => p.id === newRecord.id);
+                if (exists) {
+                  return prev.map((p) => (p.id === newRecord.id ? ({ ...p, ...newRecord } as StockPurchase) : p));
+                } else {
+                  return [newRecord as StockPurchase, ...prev];
+                }
+              });
+            } else if (table === 'expenses') {
+              setExpenses((prev) => {
+                const exists = prev.some((e) => e.id === newRecord.id);
+                if (exists) {
+                  return prev.map((e) => (e.id === newRecord.id ? ({ ...e, ...newRecord } as any) : e));
+                } else {
+                  return [newRecord as any, ...prev];
+                }
+              });
+            } else if (table === 'audit_logs') {
+              setAuditLogs((prev) => {
+                const exists = prev.some((l) => l.id === newRecord.id);
+                if (exists) {
+                  return prev.map((l) => (l.id === newRecord.id ? ({ ...l, ...newRecord } as AuditLogEntry) : l));
+                } else {
+                  return [newRecord as AuditLogEntry, ...prev];
+                }
+              });
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [deletedRecordIds]);
+
   // Instant real-time auto-push to Supabase on any data mutation
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -2884,15 +2865,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         }
 
-        setProducts(Array.isArray(parsed.products) ? parsed.products : []);
-        setCustomers(Array.isArray(parsed.customers) ? parsed.customers : []);
-        setSuppliers(Array.isArray(parsed.suppliers) ? parsed.suppliers : []);
-        setInvoices(Array.isArray(parsed.invoices) ? parsed.invoices : []);
-        setPurchases(Array.isArray(parsed.purchases) ? parsed.purchases : []);
-        setKhataTransactions(Array.isArray(parsed.khataTransactions) ? parsed.khataTransactions : []);
-        setExpenses(Array.isArray(parsed.expenses) ? parsed.expenses : []);
+        setProducts([]);
+        setCustomers([]);
+        setSuppliers([]);
+        setInvoices([]);
+        setPurchases([]);
+        setKhataTransactions([]);
+        setExpenses([]);
+        setSalesReturns([]);
+        setPurchaseReturns([]);
         setStaffList(Array.isArray(parsed.staffList) ? parsed.staffList : INITIAL_STAFF.filter((s) => !s.storeOwnerId || s.storeOwnerId === targetId));
         setStaffPayments(Array.isArray(parsed.staffPayments) ? parsed.staffPayments : INITIAL_STAFF_PAYMENTS);
+        setAuditLogs([]);
       } else {
         // Initialize fresh personalized shop profile for this specific user
         const freshProfile: ShopProfile = {
@@ -2919,8 +2903,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setPurchases([]);
         setKhataTransactions([]);
         setExpenses([]);
+        setSalesReturns([]);
+        setPurchaseReturns([]);
         setStaffList(INITIAL_STAFF.filter((s) => !s.storeOwnerId || s.storeOwnerId === targetId));
         setStaffPayments([]);
+        setAuditLogs([]);
       }
       setLoadedUserId(targetId);
     } catch (e) {
@@ -3026,6 +3013,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteProduct = (productId: string) => {
     setProducts((prev) => prev.filter((p) => p.id !== productId));
+    markAsDeleted(['products'], productId);
   };
 
   // Customers
@@ -3826,6 +3814,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteExpense = (expenseId: string) => {
     setExpenses((prev) => prev.filter((e) => e.id !== expenseId));
+    markAsDeleted(['expenses'], expenseId);
   };
 
   // Staff Management Handlers
