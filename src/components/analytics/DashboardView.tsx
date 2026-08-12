@@ -773,21 +773,26 @@ export const DashboardView: React.FC = () => {
           </div>
         </div>
 
-        {/* Card 5: Digital QR */}
-        <div className="flex flex-col justify-between rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-2.5 sm:p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+        {/* Card 5: Stock Purchases */}
+        <div
+          onClick={() => setActiveTab('purchases')}
+          className="flex flex-col justify-between rounded-xl sm:rounded-2xl border border-blue-200 bg-blue-50/40 p-2.5 sm:p-4 shadow-2xs dark:border-blue-900/50 dark:bg-slate-900/90 cursor-pointer hover:border-blue-300 dark:hover:border-blue-800 transition active:scale-98"
+        >
           <div className="flex items-center justify-between gap-1">
-            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-tight sm:tracking-wider text-slate-500 truncate">
-              Digital QR Wallet
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-tight sm:tracking-wider text-blue-700 dark:text-blue-400 truncate">
+              Stock Purchases
             </span>
-            <div className="flex h-6 w-6 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
-              <QrCode className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <div className="flex h-6 w-6 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400">
+              <Truck className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             </div>
           </div>
           <div className="mt-1.5 sm:mt-2">
-            <h3 className="text-xs sm:text-xl font-bold text-indigo-600 dark:text-indigo-400 truncate">
-              NPR {kpiTotalQr.toLocaleString()}
+            <h3 className="text-xs sm:text-xl font-bold text-blue-600 dark:text-blue-400 truncate">
+              NPR {kpiTotalPurchases.toLocaleString()}
             </h3>
-            <p className="text-[8px] sm:text-[10px] text-slate-500 mt-0.5 sm:mt-1 truncate">eSewa, Khalti & Fonepay</p>
+            <p className="text-[8px] sm:text-[10px] text-blue-700 dark:text-blue-300 font-semibold mt-0.5 sm:mt-1 flex items-center gap-0.5 truncate">
+              <span className="truncate">Stock Buy Inflow ({kpiPurchases.length} logs)</span>
+            </p>
           </div>
         </div>
 

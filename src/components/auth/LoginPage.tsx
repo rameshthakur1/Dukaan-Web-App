@@ -228,6 +228,12 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
+    // Stop early if account is blocked or attempt limit countdown active
+    if (res.isBlocked || res.remainingAttempts !== undefined) {
+      setErrorMsg(res.message);
+      return;
+    }
+
     // 3. Fallback: Exhaustive search in Supabase across all tables & store snapshots for remote user accounts
     try {
       const userCandidates: AuthUser[] = [];
@@ -1487,12 +1493,41 @@ export const LoginPage: React.FC = () => {
             {authMode === 'LOGIN' && (
               <form onSubmit={handleLoginSubmit} className="space-y-4">
                 {errorMsg && (
-                  <div className="p-3.5 rounded-xl bg-red-950/80 border border-red-800/80 text-red-200 text-xs flex items-start gap-2.5">
-                    <AlertTriangle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="font-bold">Login Error</p>
-                      <p>{errorMsg}</p>
+                  <div className={`p-4 rounded-2xl border text-xs flex flex-col gap-3.5 ${
+                    errorMsg.includes('BLOCKED') || errorMsg.includes('blocked')
+                      ? 'bg-amber-950/90 border-amber-500/60 text-amber-100 shadow-lg'
+                      : 'bg-red-950/80 border-red-800/80 text-red-200'
+                  }`}>
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className={`h-5 w-5 shrink-0 mt-0.5 ${
+                        errorMsg.includes('BLOCKED') || errorMsg.includes('blocked') ? 'text-amber-400' : 'text-red-400'
+                      }`} />
+                      <div className="space-y-1">
+                        <p className="font-extrabold text-sm">
+                          {errorMsg.includes('BLOCKED') || errorMsg.includes('blocked') ? 'Security Alert: Account Blocked' : 'Login Error'}
+                        </p>
+                        <p className="leading-relaxed">{errorMsg}</p>
+                      </div>
                     </div>
+
+                    {(errorMsg.includes('BLOCKED') || errorMsg.includes('blocked') || errorMsg.includes('remaining') || errorMsg.includes('Incorrect password')) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode('FORGOT_PASSWORD');
+                          setForgotStep('REQUEST_CODE');
+                          setForgotEmail(username.includes('@') ? username : '');
+                          setForgotErrorMsg('');
+                          setForgotSuccessMsg('');
+                          setForgotOtpDigits(['', '', '', '', '', '']);
+                        }}
+                        className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs shadow-md transition flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
+                        id="btn-forgot-password-unlock-now"
+                      >
+                        <KeyRound className="h-4 w-4" />
+                        <span>Reset Password & Unlock Account</span>
+                      </button>
+                    )}
                   </div>
                 )}
 

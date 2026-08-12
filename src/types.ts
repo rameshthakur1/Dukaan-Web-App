@@ -50,8 +50,10 @@ export interface Customer {
   id: string;
   name: string;
   phone: string;
+  email?: string;
   address?: string;
   tole?: string;
+  panVat?: string;
   totalPurchases: number;
   currentBalance: number; // Positive = customer owes us money (Udharo)
   advanceBalance?: number; // Advance money paid/deposited by customer
@@ -66,8 +68,10 @@ export interface Supplier {
   id: string;
   name: string;
   phone: string;
+  email?: string;
   companyName?: string;
   address?: string;
+  panVat?: string;
   totalPurchased: number;
   pendingPayable: number; // Money we owe to supplier
   advanceBalance?: number; // Advance money paid to supplier
@@ -433,7 +437,7 @@ export interface AuditLogEntry {
   syncedToCloud?: boolean;
 }
 
-export type UserStatus = 'TRIAL_ACTIVE' | 'PENDING_APPROVAL' | 'APPROVED' | 'EXPIRED' | 'REJECTED';
+export type UserStatus = 'TRIAL_ACTIVE' | 'PENDING_APPROVAL' | 'APPROVED' | 'EXPIRED' | 'REJECTED' | 'BLOCKED';
 export type SubscriptionPlan = '7_DAY_TRIAL' | 'MONTHLY' | 'QUARTERLY' | 'HALF_YEARLY' | 'YEARLY';
 
 export interface AuthUser {
@@ -462,6 +466,8 @@ export interface AuthUser {
   referredByUserId?: string; // AuthUser ID of referrer
   staffUserIdAccessStatus?: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
   notes?: string;
+  failedLoginAttempts?: number;
+  blockedAt?: string;
 }
 
 export type AnnouncementTargetType =

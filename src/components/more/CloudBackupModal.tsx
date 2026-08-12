@@ -17,13 +17,137 @@ import {
 } from 'lucide-react';
 
 const SUPABASE_SQL_SCRIPT = `-- =========================================================================
--- DUKAAN / RETAIL STORE POS - COMPLETE SUPABASE DATABASE SCHEMA SETUP
--- Run this in Supabase SQL Editor to enable 100% live database recording
+-- DUKAAN / RETAIL STORE POS - COMPLETE SUPABASE DATABASE SCHEMA & AUTOMATION
+-- Paste this script into Supabase SQL Editor to set up tables and triggers.
 -- =========================================================================
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 1. INVOICES & SALES
+-- 0. ALTER EXISTING TABLES TO GUARANTEE SHOP_NAME AND SHOP_CODE COLUMNS EXIST
+ALTER TABLE IF EXISTS public.customers ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.customers ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.suppliers ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.suppliers ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.products ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.products ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.invoices ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.invoices ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.sales ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.sales ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.purchases ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.purchases ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.stock_purchases ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.stock_purchases ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.udharo_khata ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.udharo_khata ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.khata_transactions ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.khata_transactions ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.customer_advance_payments ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.customer_advance_payments ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.supplier_advance_payments ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.supplier_advance_payments ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.expenses ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.expenses ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.sales_returns ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.sales_returns ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.purchase_returns ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.purchase_returns ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.invoice_items ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.invoice_items ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.purchase_items ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.activity_logs ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.activity_logs ADD COLUMN IF NOT EXISTS shop_code TEXT;
+ALTER TABLE IF EXISTS public.audit_logs ADD COLUMN IF NOT EXISTS shop_name TEXT;
+ALTER TABLE IF EXISTS public.audit_logs ADD COLUMN IF NOT EXISTS shop_code TEXT;
+
+ALTER TABLE IF EXISTS public.store_snapshots ADD COLUMN IF NOT EXISTS supplier_advance_payments JSONB;
+ALTER TABLE IF EXISTS public.dukaan_store_snapshots ADD COLUMN IF NOT EXISTS supplier_advance_payments JSONB;
+ALTER TABLE IF EXISTS public.store_backups ADD COLUMN IF NOT EXISTS supplier_advance_payments JSONB;
+
+-- DISABLE RLS TO ALLOW OPEN API SYNC
+ALTER TABLE IF EXISTS public.registered_users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.app_users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.customers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.suppliers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.products DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.invoices DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.sales DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.purchases DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.stock_purchases DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.expenses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.invoice_items DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.purchase_items DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.store_snapshots DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.store_backups DISABLE ROW LEVEL SECURITY;
+
+-- 1. CUSTOMERS TABLE
+CREATE TABLE IF NOT EXISTS public.customers (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  phone TEXT,
+  email TEXT,
+  address TEXT,
+  tole TEXT,
+  pan_vat TEXT,
+  credit_limit NUMERIC DEFAULT 0,
+  total_purchases NUMERIC DEFAULT 0,
+  current_balance NUMERIC DEFAULT 0,
+  advance_balance NUMERIC DEFAULT 0,
+  last_purchase_date TEXT,
+  due_date TEXT,
+  due_notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. SUPPLIERS TABLE
+CREATE TABLE IF NOT EXISTS public.suppliers (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  company_name TEXT,
+  phone TEXT,
+  email TEXT,
+  address TEXT,
+  pan_vat TEXT,
+  total_purchased NUMERIC DEFAULT 0,
+  pending_payable NUMERIC DEFAULT 0,
+  advance_balance NUMERIC DEFAULT 0,
+  due_date TEXT,
+  due_notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3. PRODUCTS / INVENTORY TABLE
+CREATE TABLE IF NOT EXISTS public.products (
+  id TEXT PRIMARY KEY,
+  sku TEXT,
+  barcode TEXT,
+  carton_barcode TEXT,
+  name TEXT,
+  category TEXT,
+  stock_qty NUMERIC DEFAULT 0,
+  min_stock_alert NUMERIC DEFAULT 5,
+  unit JSONB,
+  supplier_id TEXT,
+  supplier_name TEXT,
+  rack_no TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 4. SALES & INVOICES TABLES
 CREATE TABLE IF NOT EXISTS public.invoices (
   id TEXT PRIMARY KEY,
   invoice_no TEXT,
@@ -31,14 +155,15 @@ CREATE TABLE IF NOT EXISTS public.invoices (
   customer_name TEXT,
   customer_phone TEXT,
   items JSONB,
-  subtotal NUMERIC,
-  discount NUMERIC,
-  tax_amount NUMERIC,
-  net_amount NUMERIC,
+  subtotal NUMERIC DEFAULT 0,
+  discount NUMERIC DEFAULT 0,
+  tax_amount NUMERIC DEFAULT 0,
+  net_amount NUMERIC DEFAULT 0,
   split_payment JSONB,
   payment_status TEXT,
   cashier_name TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
   shop_code TEXT,
   user_id TEXT,
   synced_at TIMESTAMPTZ DEFAULT NOW()
@@ -51,20 +176,21 @@ CREATE TABLE IF NOT EXISTS public.sales (
   customer_name TEXT,
   customer_phone TEXT,
   items JSONB,
-  subtotal NUMERIC,
-  discount NUMERIC,
-  tax_amount NUMERIC,
-  net_amount NUMERIC,
+  subtotal NUMERIC DEFAULT 0,
+  discount NUMERIC DEFAULT 0,
+  tax_amount NUMERIC DEFAULT 0,
+  net_amount NUMERIC DEFAULT 0,
   split_payment JSONB,
   payment_status TEXT,
   cashier_name TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
   shop_code TEXT,
   user_id TEXT,
   synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. PURCHASES
+-- 5. PURCHASES & STOCK PURCHASES TABLES
 CREATE TABLE IF NOT EXISTS public.purchases (
   id TEXT PRIMARY KEY,
   purchase_no TEXT,
@@ -72,111 +198,129 @@ CREATE TABLE IF NOT EXISTS public.purchases (
   supplier_name TEXT,
   invoice_ref TEXT,
   items JSONB,
-  total_amount NUMERIC,
-  cash_paid NUMERIC,
-  supplier_credit NUMERIC,
+  total_amount NUMERIC DEFAULT 0,
+  cash_paid NUMERIC DEFAULT 0,
+  supplier_credit NUMERIC DEFAULT 0,
   purchase_date TEXT,
   notes TEXT,
   performed_by TEXT,
+  shop_name TEXT,
   shop_code TEXT,
   user_id TEXT,
   synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. CUSTOMERS
-CREATE TABLE IF NOT EXISTS public.customers (
+CREATE TABLE IF NOT EXISTS public.stock_purchases (
   id TEXT PRIMARY KEY,
-  name TEXT,
-  phone TEXT,
-  email TEXT,
-  address TEXT,
-  pan_vat TEXT,
-  credit_limit NUMERIC,
-  total_purchases NUMERIC,
-  current_balance NUMERIC,
-  advance_balance NUMERIC,
-  last_purchase_date TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
+  purchase_no TEXT,
+  supplier_id TEXT,
+  supplier_name TEXT,
+  invoice_ref TEXT,
+  items JSONB,
+  total_amount NUMERIC DEFAULT 0,
+  cash_paid NUMERIC DEFAULT 0,
+  supplier_credit NUMERIC DEFAULT 0,
+  purchase_date TEXT,
+  notes TEXT,
+  performed_by TEXT,
+  shop_name TEXT,
   shop_code TEXT,
   user_id TEXT,
   synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. SUPPLIERS
-CREATE TABLE IF NOT EXISTS public.suppliers (
+-- 6. UDHARO KHATA & TRANSACTIONS TABLES
+CREATE TABLE IF NOT EXISTS public.udharo_khata (
   id TEXT PRIMARY KEY,
-  name TEXT,
-  company_name TEXT,
-  phone TEXT,
-  email TEXT,
-  address TEXT,
-  pan_vat TEXT,
-  total_purchased NUMERIC,
-  pending_payable NUMERIC,
-  advance_balance NUMERIC,
+  entity_type TEXT,
+  entity_id TEXT,
+  entity_name TEXT,
+  type TEXT,
+  amount NUMERIC DEFAULT 0,
+  payment_method TEXT,
+  reference_invoice_id TEXT,
+  note TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
+  balance_after NUMERIC DEFAULT 0,
+  performed_by TEXT,
+  shop_name TEXT,
   shop_code TEXT,
   user_id TEXT,
   synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. KHATA TRANSACTIONS
 CREATE TABLE IF NOT EXISTS public.khata_transactions (
   id TEXT PRIMARY KEY,
   entity_type TEXT,
   entity_id TEXT,
   entity_name TEXT,
   type TEXT,
-  amount NUMERIC,
+  amount NUMERIC DEFAULT 0,
   payment_method TEXT,
   reference_invoice_id TEXT,
   note TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  balance_after NUMERIC,
+  balance_after NUMERIC DEFAULT 0,
   performed_by TEXT,
+  shop_name TEXT,
   shop_code TEXT,
   user_id TEXT,
   synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 6. PRODUCTS
-CREATE TABLE IF NOT EXISTS public.products (
+-- 7. ADVANCE PAYMENTS (CUSTOMER & SUPPLIER)
+CREATE TABLE IF NOT EXISTS public.customer_advance_payments (
   id TEXT PRIMARY KEY,
-  sku TEXT,
-  barcode TEXT,
-  carton_barcode TEXT,
-  name TEXT,
-  category TEXT,
-  stock_qty NUMERIC,
-  min_stock_alert NUMERIC,
-  unit TEXT,
+  customer_id TEXT,
+  customer_name TEXT,
+  customer_phone TEXT,
+  amount NUMERIC DEFAULT 0,
+  payment_method TEXT,
+  payment_date TEXT,
+  notes TEXT,
+  recorded_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.supplier_advance_payments (
+  id TEXT PRIMARY KEY,
   supplier_id TEXT,
   supplier_name TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  shop_code TEXT,
-  user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 7. EXPENSES
-CREATE TABLE IF NOT EXISTS public.expenses (
-  id TEXT PRIMARY KEY,
-  expense_no TEXT,
-  category TEXT,
-  title TEXT,
-  amount NUMERIC,
+  amount NUMERIC DEFAULT 0,
   payment_method TEXT,
-  paid_to TEXT,
+  payment_date TEXT,
   notes TEXT,
-  expense_date TEXT,
+  recorded_by TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
   shop_code TEXT,
   user_id TEXT,
   synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. REGISTERED USERS
+-- 8. USERS TABLES (ADMIN USER MONITORING & SHOP DETAILS)
+CREATE TABLE IF NOT EXISTS public.users (
+  id TEXT PRIMARY KEY,
+  username TEXT,
+  password TEXT,
+  email TEXT,
+  phone TEXT,
+  name TEXT,
+  role TEXT,
+  shop_name TEXT,
+  shop_code TEXT,
+  status TEXT,
+  subscription_plan TEXT,
+  approved_until_date TEXT,
+  user_payload JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.registered_users (
   id TEXT PRIMARY KEY,
   username TEXT,
@@ -189,11 +333,146 @@ CREATE TABLE IF NOT EXISTS public.registered_users (
   shop_code TEXT,
   status TEXT,
   subscription_plan TEXT,
+  approved_until_date TEXT,
   user_payload JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 9. STORE SNAPSHOTS BACKUP
+CREATE TABLE IF NOT EXISTS public.app_users (
+  id TEXT PRIMARY KEY,
+  username TEXT,
+  password TEXT,
+  email TEXT,
+  phone TEXT,
+  name TEXT,
+  role TEXT,
+  shop_name TEXT,
+  shop_code TEXT,
+  status TEXT,
+  subscription_plan TEXT,
+  approved_until_date TEXT,
+  user_payload JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 9. SHOP PROFILES TABLE
+CREATE TABLE IF NOT EXISTS public.shop_profiles (
+  id TEXT PRIMARY KEY,
+  shop_name TEXT,
+  shop_code TEXT,
+  owner_name TEXT,
+  phone TEXT,
+  email TEXT,
+  address TEXT,
+  pan_vat_no TEXT,
+  logo_url TEXT,
+  tax_rate NUMERIC,
+  currency TEXT,
+  invoice_header_note TEXT,
+  invoice_footer_note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  user_id TEXT,
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 10. EXPENSES & RETURNS TABLES
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id TEXT PRIMARY KEY,
+  expense_no TEXT,
+  category TEXT,
+  title TEXT,
+  amount NUMERIC DEFAULT 0,
+  payment_method TEXT,
+  paid_to TEXT,
+  notes TEXT,
+  expense_date TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.sales_returns (
+  id TEXT PRIMARY KEY,
+  return_no TEXT,
+  invoice_id TEXT,
+  invoice_no TEXT,
+  customer_id TEXT,
+  customer_name TEXT,
+  items JSONB,
+  total_refund_amount NUMERIC DEFAULT 0,
+  refund_method TEXT,
+  reason TEXT,
+  return_date TEXT,
+  recorded_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.purchase_returns (
+  id TEXT PRIMARY KEY,
+  return_no TEXT,
+  purchase_id TEXT,
+  purchase_no TEXT,
+  supplier_id TEXT,
+  supplier_name TEXT,
+  items JSONB,
+  total_refund_amount NUMERIC DEFAULT 0,
+  refund_method TEXT,
+  reason TEXT,
+  return_date TEXT,
+  recorded_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 11. ITEMIZED LINE ITEM TABLES
+CREATE TABLE IF NOT EXISTS public.invoice_items (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT,
+  invoice_no TEXT,
+  product_id TEXT,
+  product_name TEXT,
+  quantity NUMERIC DEFAULT 0,
+  unit_price NUMERIC DEFAULT 0,
+  subtotal NUMERIC DEFAULT 0,
+  discount NUMERIC DEFAULT 0,
+  total_amount NUMERIC DEFAULT 0,
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.purchase_items (
+  id TEXT PRIMARY KEY,
+  purchase_id TEXT,
+  purchase_no TEXT,
+  product_id TEXT,
+  product_name TEXT,
+  quantity NUMERIC DEFAULT 0,
+  purchase_price NUMERIC DEFAULT 0,
+  subtotal NUMERIC DEFAULT 0,
+  total_amount NUMERIC DEFAULT 0,
+  shop_name TEXT,
+  shop_code TEXT,
+  user_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 12. STORE SNAPSHOTS & BACKUPS
 CREATE TABLE IF NOT EXISTS public.store_snapshots (
   id TEXT PRIMARY KEY,
   user_id TEXT,
@@ -208,26 +487,47 @@ CREATE TABLE IF NOT EXISTS public.store_snapshots (
   khata_transactions JSONB,
   products JSONB,
   expenses JSONB,
+  supplier_advance_payments JSONB,
   last_synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 10. SUPPLIER ADVANCE PAYMENTS
-CREATE TABLE IF NOT EXISTS public.supplier_advance_payments (
+CREATE TABLE IF NOT EXISTS public.dukaan_store_snapshots (
   id TEXT PRIMARY KEY,
-  supplier_id TEXT,
-  supplier_name TEXT,
-  amount NUMERIC,
-  payment_method TEXT,
-  payment_date TEXT,
-  notes TEXT,
-  recorded_by TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  shop_code TEXT,
   user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
+  shop_code TEXT,
+  shop_name TEXT,
+  shop_profile JSONB,
+  registered_users JSONB,
+  sales_invoices JSONB,
+  stock_purchases JSONB,
+  customers JSONB,
+  suppliers JSONB,
+  khata_transactions JSONB,
+  products JSONB,
+  expenses JSONB,
+  supplier_advance_payments JSONB,
+  last_synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 11. ACTIVITY & AUDIT LOGS
+CREATE TABLE IF NOT EXISTS public.store_backups (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+  shop_code TEXT,
+  shop_name TEXT,
+  shop_profile JSONB,
+  registered_users JSONB,
+  sales_invoices JSONB,
+  stock_purchases JSONB,
+  customers JSONB,
+  suppliers JSONB,
+  khata_transactions JSONB,
+  products JSONB,
+  expenses JSONB,
+  supplier_advance_payments JSONB,
+  last_synced_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 13. AUDIT & ACTIVITY LOGS
 CREATE TABLE IF NOT EXISTS public.activity_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT,
@@ -258,265 +558,323 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 12. ITEMIZE & RETURN TABLES
-CREATE TABLE IF NOT EXISTS public.invoice_items (
-  id TEXT PRIMARY KEY,
-  invoice_id TEXT,
-  invoice_no TEXT,
-  product_id TEXT,
-  product_name TEXT,
-  quantity NUMERIC,
-  unit_price NUMERIC,
-  subtotal NUMERIC,
-  discount NUMERIC,
-  total_amount NUMERIC,
-  shop_code TEXT,
-  user_id TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.purchase_items (
-  id TEXT PRIMARY KEY,
-  purchase_id TEXT,
-  purchase_no TEXT,
-  product_id TEXT,
-  product_name TEXT,
-  quantity NUMERIC,
-  purchase_price NUMERIC,
-  subtotal NUMERIC,
-  total_amount NUMERIC,
-  shop_code TEXT,
-  user_id TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.sales_returns (
-  id TEXT PRIMARY KEY,
-  return_no TEXT,
-  invoice_id TEXT,
-  invoice_no TEXT,
-  customer_id TEXT,
-  customer_name TEXT,
-  items JSONB,
-  total_refund_amount NUMERIC,
-  refund_method TEXT,
-  reason TEXT,
-  return_date TEXT,
-  recorded_by TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  shop_code TEXT,
-  user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.purchase_returns (
-  id TEXT PRIMARY KEY,
-  return_no TEXT,
-  purchase_id TEXT,
-  purchase_no TEXT,
-  supplier_id TEXT,
-  supplier_name TEXT,
-  items JSONB,
-  total_refund_amount NUMERIC,
-  refund_method TEXT,
-  reason TEXT,
-  return_date TEXT,
-  recorded_by TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  shop_code TEXT,
-  user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.customer_advance_payments (
-  id TEXT PRIMARY KEY,
-  customer_id TEXT,
-  customer_name TEXT,
-  customer_phone TEXT,
-  amount NUMERIC,
-  payment_method TEXT,
-  payment_date TEXT,
-  notes TEXT,
-  recorded_by TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  shop_code TEXT,
-  user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.shop_profiles (
-  id TEXT PRIMARY KEY,
-  shop_name TEXT,
-  shop_code TEXT,
-  owner_name TEXT,
-  phone TEXT,
-  email TEXT,
-  address TEXT,
-  pan_vat_no TEXT,
-  logo_url TEXT,
-  tax_rate NUMERIC,
-  currency TEXT,
-  invoice_header_note TEXT,
-  invoice_footer_note TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 13. FALLBACK & ALIAS TABLES
-CREATE TABLE IF NOT EXISTS public.stock_purchases (
-  id TEXT PRIMARY KEY,
-  purchase_no TEXT,
-  supplier_id TEXT,
-  supplier_name TEXT,
-  invoice_ref TEXT,
-  items JSONB,
-  total_amount NUMERIC,
-  cash_paid NUMERIC,
-  supplier_credit NUMERIC,
-  purchase_date TEXT,
-  notes TEXT,
-  performed_by TEXT,
-  shop_code TEXT,
-  user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.app_users (
-  id TEXT PRIMARY KEY,
-  username TEXT,
-  password TEXT,
-  email TEXT,
-  phone TEXT,
-  name TEXT,
-  role TEXT,
-  shop_name TEXT,
-  shop_code TEXT,
-  status TEXT,
-  subscription_plan TEXT,
-  user_payload JSONB,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.udharo_khata (
-  id TEXT PRIMARY KEY,
-  entity_type TEXT,
-  entity_id TEXT,
-  entity_name TEXT,
-  type TEXT,
-  amount NUMERIC,
-  payment_method TEXT,
-  reference_invoice_id TEXT,
-  note TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  balance_after NUMERIC,
-  performed_by TEXT,
-  shop_code TEXT,
-  user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.khata_details (
-  id TEXT PRIMARY KEY,
-  entity_type TEXT,
-  entity_id TEXT,
-  entity_name TEXT,
-  type TEXT,
-  amount NUMERIC,
-  payment_method TEXT,
-  reference_invoice_id TEXT,
-  note TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  balance_after NUMERIC,
-  performed_by TEXT,
-  shop_code TEXT,
-  user_id TEXT,
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.dukaan_store_snapshots (
-  id TEXT PRIMARY KEY,
-  user_id TEXT,
-  shop_code TEXT,
-  shop_name TEXT,
-  shop_profile JSONB,
-  registered_users JSONB,
-  sales_invoices JSONB,
-  stock_purchases JSONB,
-  customers JSONB,
-  suppliers JSONB,
-  khata_transactions JSONB,
-  products JSONB,
-  expenses JSONB,
-  last_synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.store_backups (
-  id TEXT PRIMARY KEY,
-  user_id TEXT,
-  shop_code TEXT,
-  shop_name TEXT,
-  shop_profile JSONB,
-  registered_users JSONB,
-  sales_invoices JSONB,
-  stock_purchases JSONB,
-  customers JSONB,
-  suppliers JSONB,
-  khata_transactions JSONB,
-  products JSONB,
-  expenses JSONB,
-  last_synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 14. ENSURE ALL COLUMNS EXIST ON PRE-EXISTING TABLES
+-- 14. ALTER EXISTING TABLES TO ENSURE NO MISSING COLUMNS
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS carton_barcode TEXT;
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS supplier_id TEXT;
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS supplier_name TEXT;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS rack_no TEXT;
 ALTER TABLE public.products ADD COLUMN IF NOT EXISTS min_stock_alert NUMERIC;
 
 ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS advance_balance NUMERIC;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS tole TEXT;
 ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS pan_vat TEXT;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS due_date TEXT;
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS due_notes TEXT;
 
 ALTER TABLE public.suppliers ADD COLUMN IF NOT EXISTS advance_balance NUMERIC;
 ALTER TABLE public.suppliers ADD COLUMN IF NOT EXISTS pan_vat TEXT;
+ALTER TABLE public.suppliers ADD COLUMN IF NOT EXISTS due_date TEXT;
+ALTER TABLE public.suppliers ADD COLUMN IF NOT EXISTS due_notes TEXT;
 
 ALTER TABLE public.invoices ADD COLUMN IF NOT EXISTS split_payment JSONB;
 ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS split_payment JSONB;
 
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS user_payload JSONB;
 ALTER TABLE public.registered_users ADD COLUMN IF NOT EXISTS user_payload JSONB;
 ALTER TABLE public.app_users ADD COLUMN IF NOT EXISTS user_payload JSONB;
 
--- 15. DISABLE ROW LEVEL SECURITY (RLS) FOR UNRESTRICTED REALTIME RECORDING
+-- -------------------------------------------------------------------------
+-- AUTOMATION FUNCTIONS & TRIGGERS
+-- -------------------------------------------------------------------------
+
+-- FUNCTION A: PROCESS SALE / INVOICE AUTOMATION
+-- Auto-records unregistered customer, reduces stock quantity, updates Udharo Khata
+CREATE OR REPLACE FUNCTION public.fn_process_sale_automation()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_customer_id TEXT;
+  v_credit_amount NUMERIC := 0;
+  v_item JSONB;
+  v_prod_id TEXT;
+  v_qty NUMERIC;
+  v_udharo_from_split NUMERIC := 0;
+  v_new_cust_id TEXT;
+BEGIN
+  -- 1. Check & Auto-Register Unregistered Customer
+  IF NEW.customer_name IS NOT NULL AND TRIM(NEW.customer_name) <> '' AND UPPER(TRIM(NEW.customer_name)) <> 'WALK-IN CUSTOMER' THEN
+    SELECT id INTO v_customer_id
+    FROM public.customers
+    WHERE (id = NEW.customer_id AND NEW.customer_id IS NOT NULL AND NEW.customer_id <> '')
+       OR (LOWER(TRIM(name)) = LOWER(TRIM(NEW.customer_name)))
+       OR (phone = NEW.customer_phone AND NEW.customer_phone IS NOT NULL AND TRIM(NEW.customer_phone) <> '')
+    LIMIT 1;
+
+    IF v_customer_id IS NULL THEN
+      v_new_cust_id := COALESCE(NEW.customer_id, 'CUST_' || substring(md5(random()::text) from 1 for 8));
+      v_customer_id := v_new_cust_id;
+      
+      INSERT INTO public.customers (
+        id, name, phone, credit_limit, total_purchases, current_balance, advance_balance, created_at, shop_code, user_id
+      ) VALUES (
+        v_new_cust_id,
+        TRIM(NEW.customer_name),
+        COALESCE(NEW.customer_phone, 'N/A'),
+        10000,
+        COALESCE(NEW.net_amount, 0),
+        0,
+        0,
+        NOW(),
+        NEW.shop_code,
+        NEW.user_id
+      );
+    ELSE
+      -- Update existing customer total purchases & last purchase date
+      UPDATE public.customers
+      SET total_purchases = COALESCE(total_purchases, 0) + COALESCE(NEW.net_amount, 0),
+          last_purchase_date = NOW()::text
+      WHERE id = v_customer_id;
+    END IF;
+
+    -- Assign customer_id if missing
+    NEW.customer_id := v_customer_id;
+  END IF;
+
+  -- 2. Auto Inventory Stock Reduction - Managed by Application
+  -- Product stock levels are updated explicitly by client applications and synced.
+
+  -- 3. Calculate Udharo / Credit Amount
+  IF NEW.split_payment IS NOT NULL AND jsonb_typeof(NEW.split_payment) = 'object' THEN
+    v_udharo_from_split := COALESCE((NEW.split_payment->>'udharo')::NUMERIC, 0);
+  END IF;
+
+  IF v_udharo_from_split > 0 THEN
+    v_credit_amount := v_udharo_from_split;
+  ELSIF NEW.payment_status = 'UNPAID' OR NEW.payment_status = 'CREDIT' THEN
+    v_credit_amount := COALESCE(NEW.net_amount, 0);
+  END IF;
+
+  -- 4. Auto Udharo Khata Record & Customer Balance Update
+  IF v_credit_amount > 0 AND v_customer_id IS NOT NULL THEN
+    UPDATE public.customers
+    SET current_balance = COALESCE(current_balance, 0) + v_credit_amount
+    WHERE id = v_customer_id;
+
+    -- Insert into udharo_khata & khata_transactions
+    INSERT INTO public.udharo_khata (
+      id, entity_type, entity_id, entity_name, type, amount, payment_method, reference_invoice_id, note, performed_by, shop_code, user_id
+    ) VALUES (
+      'KHATA_' || substring(md5(random()::text) from 1 for 12),
+      'CUSTOMER',
+      v_customer_id,
+      COALESCE(NEW.customer_name, 'Customer'),
+      'CREDIT_GIVEN',
+      v_credit_amount,
+      'UDHARO',
+      COALESCE(NEW.invoice_no, NEW.id),
+      'Auto Udharo sale recorded for Invoice #' || COALESCE(NEW.invoice_no, NEW.id),
+      COALESCE(NEW.cashier_name, 'System POS'),
+      NEW.shop_code,
+      NEW.user_id
+    );
+
+    INSERT INTO public.khata_transactions (
+      id, entity_type, entity_id, entity_name, type, amount, payment_method, reference_invoice_id, note, performed_by, shop_code, user_id
+    ) VALUES (
+      'TXN_' || substring(md5(random()::text) from 1 for 12),
+      'CUSTOMER',
+      v_customer_id,
+      COALESCE(NEW.customer_name, 'Customer'),
+      'CREDIT_GIVEN',
+      v_credit_amount,
+      'UDHARO',
+      COALESCE(NEW.invoice_no, NEW.id),
+      'Auto Udharo sale recorded for Invoice #' || COALESCE(NEW.invoice_no, NEW.id),
+      COALESCE(NEW.cashier_name, 'System POS'),
+      NEW.shop_code,
+      NEW.user_id
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_invoices_automation ON public.invoices;
+CREATE TRIGGER trg_invoices_automation
+BEFORE INSERT ON public.invoices
+FOR EACH ROW EXECUTE FUNCTION public.fn_process_sale_automation();
+
+DROP TRIGGER IF EXISTS trg_sales_automation ON public.sales;
+CREATE TRIGGER trg_sales_automation
+BEFORE INSERT ON public.sales
+FOR EACH ROW EXECUTE FUNCTION public.fn_process_sale_automation();
+
+
+-- FUNCTION B: PROCESS PURCHASE AUTOMATION
+-- Auto-records unregistered supplier, increases buyed stock, updates Udharo Khata
+CREATE OR REPLACE FUNCTION public.fn_process_purchase_automation()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_supplier_id TEXT;
+  v_item JSONB;
+  v_prod_id TEXT;
+  v_qty NUMERIC;
+  v_cost NUMERIC;
+  v_prod_name TEXT;
+  v_new_supp_id TEXT;
+BEGIN
+  -- 1. Check & Auto-Register Unregistered Supplier
+  IF NEW.supplier_name IS NOT NULL AND TRIM(NEW.supplier_name) <> '' THEN
+    SELECT id INTO v_supplier_id
+    FROM public.suppliers
+    WHERE (id = NEW.supplier_id AND NEW.supplier_id IS NOT NULL AND NEW.supplier_id <> '')
+       OR (LOWER(TRIM(name)) = LOWER(TRIM(NEW.supplier_name)))
+    LIMIT 1;
+
+    IF v_supplier_id IS NULL THEN
+      v_new_supp_id := COALESCE(NEW.supplier_id, 'SUPP_' || substring(md5(random()::text) from 1 for 8));
+      v_supplier_id := v_new_supp_id;
+
+      INSERT INTO public.suppliers (
+        id, name, company_name, phone, total_purchased, pending_payable, advance_balance, created_at, shop_code, user_id
+      ) VALUES (
+        v_new_supp_id,
+        TRIM(NEW.supplier_name),
+        TRIM(NEW.supplier_name),
+        'N/A',
+        COALESCE(NEW.total_amount, 0),
+        COALESCE(NEW.supplier_credit, 0),
+        0,
+        NOW(),
+        NEW.shop_code,
+        NEW.user_id
+      );
+    ELSE
+      -- Update existing supplier total purchased
+      UPDATE public.suppliers
+      SET total_purchased = COALESCE(total_purchased, 0) + COALESCE(NEW.total_amount, 0)
+      WHERE id = v_supplier_id;
+    END IF;
+
+    -- Assign supplier_id if missing
+    NEW.supplier_id := v_supplier_id;
+  END IF;
+
+  -- 2. Auto Buyed Stock Product Creation (if missing) - Managed by Application
+  IF NEW.items IS NOT NULL AND jsonb_typeof(NEW.items) = 'array' THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(NEW.items) LOOP
+      v_prod_id := COALESCE(v_item->>'productId', v_item->>'id');
+      v_prod_name := COALESCE(v_item->>'productName', v_item->>'name', 'Purchased Product');
+      v_qty := COALESCE((v_item->>'quantity')::NUMERIC, (v_item->>'qty')::NUMERIC, 1);
+
+      IF v_prod_id IS NOT NULL AND v_prod_id <> '' THEN
+        -- If product doesn't exist, insert new product
+        IF NOT EXISTS (SELECT 1 FROM public.products WHERE id = v_prod_id OR sku = v_prod_id OR LOWER(TRIM(name)) = LOWER(TRIM(v_prod_name))) THEN
+          INSERT INTO public.products (
+            id, sku, barcode, name, category, stock_qty, min_stock_alert, supplier_id, supplier_name, created_at, shop_code, user_id
+          ) VALUES (
+            v_prod_id,
+            'SKU-' || substring(md5(random()::text) from 1 for 6),
+            'BC-' || substring(md5(random()::text) from 1 for 8),
+            v_prod_name,
+            'General',
+            v_qty,
+            5,
+            v_supplier_id,
+            NEW.supplier_name,
+            NOW(),
+            NEW.shop_code,
+            NEW.user_id
+          );
+        END IF;
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- 3. Auto Udharo Khata Record & Supplier Pending Payable Update
+  IF COALESCE(NEW.supplier_credit, 0) > 0 AND v_supplier_id IS NOT NULL THEN
+    UPDATE public.suppliers
+    SET pending_payable = COALESCE(pending_payable, 0) + NEW.supplier_credit
+    WHERE id = v_supplier_id;
+
+    INSERT INTO public.udharo_khata (
+      id, entity_type, entity_id, entity_name, type, amount, payment_method, reference_invoice_id, note, performed_by, shop_code, user_id
+    ) VALUES (
+      'KHATA_' || substring(md5(random()::text) from 1 for 12),
+      'SUPPLIER',
+      v_supplier_id,
+      COALESCE(NEW.supplier_name, 'Supplier'),
+      'DEBT_ADDED',
+      NEW.supplier_credit,
+      'UDHARO',
+      COALESCE(NEW.purchase_no, NEW.id),
+      'Auto Udharo purchase recorded for Purchase #' || COALESCE(NEW.purchase_no, NEW.id),
+      COALESCE(NEW.performed_by, 'Inventory Admin'),
+      NEW.shop_code,
+      NEW.user_id
+    );
+
+    INSERT INTO public.khata_transactions (
+      id, entity_type, entity_id, entity_name, type, amount, payment_method, reference_invoice_id, note, performed_by, shop_code, user_id
+    ) VALUES (
+      'TXN_' || substring(md5(random()::text) from 1 for 12),
+      'SUPPLIER',
+      v_supplier_id,
+      COALESCE(NEW.supplier_name, 'Supplier'),
+      'DEBT_ADDED',
+      NEW.supplier_credit,
+      'UDHARO',
+      COALESCE(NEW.purchase_no, NEW.id),
+      'Auto Udharo purchase recorded for Purchase #' || COALESCE(NEW.purchase_no, NEW.id),
+      COALESCE(NEW.performed_by, 'Inventory Admin'),
+      NEW.shop_code,
+      NEW.user_id
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_purchases_automation ON public.purchases;
+CREATE TRIGGER trg_purchases_automation
+BEFORE INSERT ON public.purchases
+FOR EACH ROW EXECUTE FUNCTION public.fn_process_purchase_automation();
+
+DROP TRIGGER IF EXISTS trg_stock_purchases_automation ON public.stock_purchases;
+CREATE TRIGGER trg_stock_purchases_automation
+BEFORE INSERT ON public.stock_purchases
+FOR EACH ROW EXECUTE FUNCTION public.fn_process_purchase_automation();
+
+
+-- DISABLE ROW LEVEL SECURITY (RLS) FOR UNRESTRICTED REALTIME RECORDING
+ALTER TABLE public.customers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.suppliers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.products DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.invoices DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sales DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.invoice_items DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.sales_returns DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.purchases DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.stock_purchases DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.purchase_items DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.purchase_returns DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.customers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.customer_advance_payments DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.suppliers DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.supplier_advance_payments DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.khata_transactions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.udharo_khata DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.khata_details DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.products DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.expenses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.khata_transactions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.customer_advance_payments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.supplier_advance_payments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.registered_users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.app_users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.shop_profiles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expenses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sales_returns DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.purchase_returns DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.invoice_items DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.purchase_items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_snapshots DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.dukaan_store_snapshots DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_backups DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_logs DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs DISABLE ROW LEVEL SECURITY;
 
--- 16. GRANT FULL READ/WRITE/UPDATE PERMISSIONS TO ALL ROLES
+-- GRANT FULL PERMISSIONS TO ALL ROLES
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 `;

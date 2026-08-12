@@ -43,11 +43,11 @@ import {
   Gift,
   Edit3,
   MessageSquare,
+  Lock,
   CheckCheck,
   MessageCircle,
   ArrowLeft,
   KeyRound,
-  Lock,
   EyeOff,
 } from 'lucide-react';
 
@@ -696,6 +696,13 @@ export const AdminPanel: React.FC = () => {
     }
 
     switch (user.status) {
+      case 'BLOCKED':
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-500/30 text-red-200 border border-red-500/50 text-xs font-black shadow-xs">
+            <Lock className="h-3 w-3 text-red-400" />
+            <span>Account Blocked</span>
+          </span>
+        );
       case 'PENDING_APPROVAL':
         return (
           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold animate-pulse">

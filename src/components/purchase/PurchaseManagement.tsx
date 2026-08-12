@@ -40,7 +40,7 @@ export const PurchaseManagement: React.FC = () => {
   const [supplierNameInput, setSupplierNameInput] = useState('');
   const [supplierPhoneInput, setSupplierPhoneInput] = useState('');
   const [invoiceRefInput, setInvoiceRefInput] = useState('');
-  const [cashPaidInput, setCashPaidInput] = useState<number>(0);
+  const [cashPaidInput, setCashPaidInput] = useState<number | string>('');
   const [notesInput, setNotesInput] = useState('');
 
   // Purchase items array
@@ -49,11 +49,16 @@ export const PurchaseManagement: React.FC = () => {
       productName: string;
       sku: string;
       barcode: string;
+      cartonBarcode?: string;
+      conversionRatio?: number | string;
+      secondaryCostPrice?: number | string;
+      secondarySellingPrice?: number | string;
+      secondaryUnit?: string;
       category: string;
       unitName: string;
-      quantity: number;
-      costPrice: number;
-      sellingPrice: number;
+      quantity: number | string;
+      costPrice: number | string;
+      sellingPrice: number | string;
     }[]
   >([
     {
@@ -63,8 +68,8 @@ export const PurchaseManagement: React.FC = () => {
       category: 'General Grocery',
       unitName: 'Packet',
       quantity: 1,
-      costPrice: 0,
-      sellingPrice: 0,
+      costPrice: '',
+      sellingPrice: '',
     },
   ]);
 
@@ -175,8 +180,8 @@ export const PurchaseManagement: React.FC = () => {
           category: 'General Grocery',
           unitName: 'Packet',
           quantity: 1,
-          costPrice: 0,
-          sellingPrice: 0,
+          costPrice: '',
+          sellingPrice: '',
         });
         setPurchaseItems(updated);
       }
@@ -237,8 +242,8 @@ export const PurchaseManagement: React.FC = () => {
         category: 'General Grocery',
         unitName: 'Packet',
         quantity: 1,
-        costPrice: 0,
-        sellingPrice: 0,
+        costPrice: '',
+        sellingPrice: '',
       },
     ]);
   };
@@ -250,8 +255,13 @@ export const PurchaseManagement: React.FC = () => {
   };
 
   // Total Purchase Bill Amount
-  const totalPurchaseBill = purchaseItems.reduce((sum, item) => sum + item.quantity * item.costPrice, 0);
-  const supplierUdharoCredit = Math.max(0, totalPurchaseBill - cashPaidInput);
+  const totalPurchaseBill = purchaseItems.reduce((sum, item) => {
+    const qty = Number(item.quantity) || 0;
+    const cost = Number(item.costPrice) || 0;
+    return sum + qty * cost;
+  }, 0);
+  const numCashPaid = Number(cashPaidInput) || 0;
+  const supplierUdharoCredit = Math.max(0, totalPurchaseBill - numCashPaid);
 
   // Submit Purchase Entry
   const handleSubmitPurchase = (e: React.FormEvent) => {
@@ -262,9 +272,26 @@ export const PurchaseManagement: React.FC = () => {
       return;
     }
 
-    const validItems = purchaseItems.filter((i) => i.productName.trim() && i.quantity > 0 && i.costPrice >= 0);
+    const validItems = purchaseItems
+      .filter((i) => i.productName.trim() && (Number(i.quantity) || 0) > 0)
+      .map((i) => ({
+        productName: i.productName.trim(),
+        sku: i.sku || '',
+        barcode: i.barcode || '',
+        cartonBarcode: i.cartonBarcode || undefined,
+        conversionRatio: i.conversionRatio !== undefined && i.conversionRatio !== '' ? Number(i.conversionRatio) : undefined,
+        secondaryCostPrice: i.secondaryCostPrice !== undefined && i.secondaryCostPrice !== '' ? Number(i.secondaryCostPrice) : undefined,
+        secondarySellingPrice: i.secondarySellingPrice !== undefined && i.secondarySellingPrice !== '' ? Number(i.secondarySellingPrice) : undefined,
+        secondaryUnit: i.secondaryUnit || undefined,
+        category: i.category || 'General Grocery',
+        unitName: i.unitName || 'Packet',
+        quantity: Number(i.quantity) || 1,
+        costPrice: Number(i.costPrice) || 0,
+        sellingPrice: Number(i.sellingPrice) || 0,
+      }));
+
     if (validItems.length === 0) {
-      alert('Please enter at least one valid purchase item with product name, quantity and cost price.');
+      alert('Please enter at least one valid purchase item with product name and quantity.');
       return;
     }
 
@@ -273,7 +300,7 @@ export const PurchaseManagement: React.FC = () => {
       supplierPhone: supplierPhoneInput.trim(),
       invoiceRef: invoiceRefInput.trim() || 'REF-N/A',
       items: validItems,
-      cashPaid: Number(cashPaidInput),
+      cashPaid: numCashPaid,
       notes: notesInput.trim(),
     });
 
@@ -282,7 +309,7 @@ export const PurchaseManagement: React.FC = () => {
     setSupplierNameInput('');
     setSupplierPhoneInput('');
     setInvoiceRefInput('');
-    setCashPaidInput(0);
+    setCashPaidInput('');
     setNotesInput('');
     setPurchaseItems([
       {
@@ -292,11 +319,12 @@ export const PurchaseManagement: React.FC = () => {
         category: 'General Grocery',
         unitName: 'Packet',
         quantity: 1,
-        costPrice: 0,
-        sellingPrice: 0,
+        costPrice: '',
+        sellingPrice: '',
       },
     ]);
   };
+
 
   // Filtered purchases
   const filteredPurchases = purchases.filter(
@@ -634,16 +662,26 @@ export const PurchaseManagement: React.FC = () => {
                             Quantity ({item.unitName || 'Pcs'})
                           </label>
                           <input
-                            type="number"
-                            min="1"
-                            required
+                            type="text"
+                            inputMode="decimal"
                             value={item.quantity}
                             onChange={(e) => {
-                              const updated = [...purchaseItems];
-                              updated[index].quantity = Math.max(1, Number(e.target.value));
-                              setPurchaseItems(updated);
+                              const val = e.target.value;
+                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                const updated = [...purchaseItems];
+                                updated[index].quantity = val;
+                                setPurchaseItems(updated);
+                              }
                             }}
-                            className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center text-xs font-bold text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            onBlur={(e) => {
+                              if (!e.target.value || Number(e.target.value) <= 0) {
+                                const updated = [...purchaseItems];
+                                updated[index].quantity = 1;
+                                setPurchaseItems(updated);
+                              }
+                            }}
+                            placeholder="1"
+                            className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
                         </div>
 
@@ -653,17 +691,19 @@ export const PurchaseManagement: React.FC = () => {
                             Buying Cost (NPR) *
                           </label>
                           <input
-                            type="number"
-                            min="0"
-                            required
+                            type="text"
+                            inputMode="decimal"
                             value={item.costPrice}
                             onChange={(e) => {
-                              const updated = [...purchaseItems];
-                              updated[index].costPrice = Number(e.target.value);
-                              setPurchaseItems(updated);
+                              const val = e.target.value;
+                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                const updated = [...purchaseItems];
+                                updated[index].costPrice = val;
+                                setPurchaseItems(updated);
+                              }
                             }}
-                            placeholder="Buying Price"
-                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-right text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            placeholder="0"
+                            className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-right text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
                         </div>
 
@@ -673,16 +713,19 @@ export const PurchaseManagement: React.FC = () => {
                             Selling Price (NPR)
                           </label>
                           <input
-                            type="number"
-                            min="0"
+                            type="text"
+                            inputMode="decimal"
                             value={item.sellingPrice}
                             onChange={(e) => {
-                              const updated = [...purchaseItems];
-                              updated[index].sellingPrice = Number(e.target.value);
-                              setPurchaseItems(updated);
+                              const val = e.target.value;
+                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                const updated = [...purchaseItems];
+                                updated[index].sellingPrice = val;
+                                setPurchaseItems(updated);
+                              }
                             }}
-                            placeholder="Selling Price"
-                            className="w-full rounded-lg border border-indigo-200 bg-indigo-50/50 px-2.5 py-1.5 text-right text-xs font-bold text-indigo-700 outline-none focus:border-indigo-600 dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-300"
+                            placeholder="0"
+                            className="no-spinner w-full rounded-lg border border-indigo-200 bg-indigo-50/50 px-2.5 py-1.5 text-right text-xs font-bold text-indigo-700 outline-none focus:border-indigo-600 dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-300"
                           />
                         </div>
 
@@ -692,7 +735,7 @@ export const PurchaseManagement: React.FC = () => {
                             Subtotal
                           </label>
                           <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
-                            NPR {(item.quantity * item.costPrice).toLocaleString()}
+                            NPR {((Number(item.quantity) || 0) * (Number(item.costPrice) || 0)).toLocaleString()}
                           </span>
                         </div>
                       </div>
@@ -724,46 +767,55 @@ export const PurchaseManagement: React.FC = () => {
                           <div>
                             <label className="text-[9px] font-bold text-slate-500 block mb-0.5">1 Box = Pcs</label>
                             <input
-                              type="number"
-                              min="1"
-                              value={item.conversionRatio || ''}
+                              type="text"
+                              inputMode="numeric"
+                              value={item.conversionRatio ?? ''}
                               onChange={(e) => {
-                                const updated = [...purchaseItems];
-                                updated[index].conversionRatio = e.target.value ? Number(e.target.value) : undefined;
-                                setPurchaseItems(updated);
+                                const val = e.target.value;
+                                if (val === '' || /^\d*$/.test(val)) {
+                                  const updated = [...purchaseItems];
+                                  updated[index].conversionRatio = val;
+                                  setPurchaseItems(updated);
+                                }
                               }}
                               placeholder="e.g. 24"
-                              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                              className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                             />
                           </div>
                           <div>
                             <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Box Buy Price</label>
                             <input
-                              type="number"
-                              min="0"
-                              value={item.secondaryCostPrice || ''}
+                              type="text"
+                              inputMode="decimal"
+                              value={item.secondaryCostPrice ?? ''}
                               onChange={(e) => {
-                                const updated = [...purchaseItems];
-                                updated[index].secondaryCostPrice = e.target.value ? Number(e.target.value) : undefined;
-                                setPurchaseItems(updated);
+                                const val = e.target.value;
+                                if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                  const updated = [...purchaseItems];
+                                  updated[index].secondaryCostPrice = val;
+                                  setPurchaseItems(updated);
+                                }
                               }}
                               placeholder="Box Cost Price"
-                              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                              className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                             />
                           </div>
                           <div>
                             <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Box Sell Price</label>
                             <input
-                              type="number"
-                              min="0"
-                              value={item.secondarySellingPrice || ''}
+                              type="text"
+                              inputMode="decimal"
+                              value={item.secondarySellingPrice ?? ''}
                               onChange={(e) => {
-                                const updated = [...purchaseItems];
-                                updated[index].secondarySellingPrice = e.target.value ? Number(e.target.value) : undefined;
-                                setPurchaseItems(updated);
+                                const val = e.target.value;
+                                if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                  const updated = [...purchaseItems];
+                                  updated[index].secondarySellingPrice = val;
+                                  setPurchaseItems(updated);
+                                }
                               }}
                               placeholder="Box Selling Price"
-                              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-indigo-600 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-indigo-400"
+                              className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-indigo-600 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-indigo-400"
                             />
                           </div>
                         </div>
@@ -800,14 +852,21 @@ export const PurchaseManagement: React.FC = () => {
                   <div className="flex items-center gap-1">
                     <span className="text-xs font-bold text-slate-500">NPR</span>
                     <input
-                      type="number"
-                      min="0"
+                      type="text"
+                      inputMode="decimal"
                       value={cashPaidInput}
-                      onChange={(e) => setCashPaidInput(Math.max(0, Number(e.target.value)))}
-                      className="w-32 rounded-lg border border-slate-200 bg-white px-3 py-1 text-right font-bold text-xs text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          setCashPaidInput(val);
+                        }
+                      }}
+                      placeholder="0"
+                      className="no-spinner w-32 rounded-lg border border-slate-200 bg-white px-3 py-1 text-right font-bold text-xs text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 focus:border-indigo-500"
                     />
                   </div>
                 </div>
+
 
                 <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-200 dark:border-slate-800">
                   <span className="font-bold text-amber-700 dark:text-amber-400">

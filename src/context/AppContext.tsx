@@ -1090,17 +1090,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  const recordFailedLoginAttempt = (accountKey: string): { attemptsCount: number; isNowBlocked: boolean } => {
+    const NOW = Date.now();
+    const TEN_MINS_MS = 10 * 60 * 1000;
+    try {
+      const stored = localStorage.getItem('dukaan_failed_login_attempts_v1');
+      let attemptsMap: Record<string, number[]> = stored ? JSON.parse(stored) : {};
+      
+      const cleanKey = accountKey.toLowerCase();
+      const userAttempts = (attemptsMap[cleanKey] || []).filter((timestamp) => NOW - timestamp < TEN_MINS_MS);
+      userAttempts.push(NOW);
+      attemptsMap[cleanKey] = userAttempts;
+      
+      localStorage.setItem('dukaan_failed_login_attempts_v1', JSON.stringify(attemptsMap));
+
+      const isNowBlocked = userAttempts.length >= 3;
+      return { attemptsCount: userAttempts.length, isNowBlocked };
+    } catch (e) {
+      console.error(e);
+      return { attemptsCount: 1, isNowBlocked: false };
+    }
+  };
+
+  const clearFailedLoginAttempts = (accountKey: string) => {
+    try {
+      const stored = localStorage.getItem('dukaan_failed_login_attempts_v1');
+      if (stored) {
+        let attemptsMap: Record<string, number[]> = JSON.parse(stored);
+        delete attemptsMap[accountKey.toLowerCase()];
+        localStorage.setItem('dukaan_failed_login_attempts_v1', JSON.stringify(attemptsMap));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const getRecentFailedAttemptsCount = (accountKey: string): number => {
+    const NOW = Date.now();
+    const TEN_MINS_MS = 10 * 60 * 1000;
+    try {
+      const stored = localStorage.getItem('dukaan_failed_login_attempts_v1');
+      if (!stored) return 0;
+      let attemptsMap: Record<string, number[]> = JSON.parse(stored);
+      const userAttempts = (attemptsMap[accountKey.toLowerCase()] || []).filter((timestamp) => NOW - timestamp < TEN_MINS_MS);
+      return userAttempts.length;
+    } catch (e) {
+      return 0;
+    }
+  };
+
   const updateUserPassword = (userId: string, newPassword: string) => {
     const cleanPass = newPassword.trim();
     if (!cleanPass || cleanPass.length < 4) {
       return { success: false, message: 'Password must be at least 4 characters long.' };
     }
     let found = false;
+    let targetEmail = '';
+    let targetUsername = '';
     setRegisteredUsers((prev) =>
       prev.map((u) => {
-        if (u.id === userId) {
+        if (
+          u.id === userId ||
+          (u.email && u.email.trim().toLowerCase() === userId.trim().toLowerCase()) ||
+          (u.username && u.username.trim().toLowerCase() === userId.trim().toLowerCase())
+        ) {
           found = true;
-          const updated = { ...u, password: cleanPass };
+          targetEmail = u.email;
+          targetUsername = u.username;
+          const restoredStatus = u.status === 'BLOCKED' ? (u.approvedUntilDate ? 'APPROVED' : 'TRIAL_ACTIVE') : u.status;
+          const updated = {
+            ...u,
+            password: cleanPass,
+            status: restoredStatus,
+            failedLoginAttempts: 0,
+            blockedAt: undefined,
+          };
           if (currentUser?.id === u.id) {
             setCurrentUser(updated);
           }
@@ -1109,14 +1173,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return u;
       })
     );
+
+    // Clear failed attempts from memory/localStorage
+    clearFailedLoginAttempts(userId);
+    if (targetEmail) clearFailedLoginAttempts(targetEmail);
+    if (targetUsername) clearFailedLoginAttempts(targetUsername);
+
     if (!found) {
       return { success: false, message: 'User account not found.' };
     }
     logActivity({
       actionType: 'STAFF_MANAGEMENT',
-      details: `Updated login password for account ID ${userId}`,
+      details: `Updated login password and unblocked account ID ${userId}`,
     });
-    return { success: true, message: 'Password updated successfully!' };
+    return { success: true, message: 'Password updated and account unblocked successfully!' };
   };
 
   const changeCurrentPassword = (currentPasswordInput: string, newPassword: string) => {
@@ -1466,14 +1536,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { matchedStaff, storeOwnerUser } = findStaffMemberAndOwner(cleanUser);
 
       if (matchedStaff) {
+        const staffKey = matchedStaff.id || matchedStaff.username || cleanUser;
+        const recentAttempts = getRecentFailedAttemptsCount(staffKey);
+
+        if (recentAttempts >= 3) {
+          return {
+            success: false,
+            isBlocked: true,
+            message: `Staff account "${usernameInput}" is BLOCKED due to 3 incorrect password attempts within 10 minutes. Please reset password using Forgot Password.`,
+          };
+        }
+
         const expectedPassword = matchedStaff.password || 'pass123';
         const isMasterPass = cleanPass === 'demo123' || cleanPass === 'pass123' || cleanPass === 'admin123';
         if (expectedPassword !== cleanPass && !isMasterPass) {
+          const { attemptsCount, isNowBlocked } = recordFailedLoginAttempt(staffKey);
+          if (isNowBlocked) {
+            return {
+              success: false,
+              isBlocked: true,
+              message: `Account BLOCKED! You entered an incorrect password 3 times within 10 minutes. Please use 'Forgot Password' to reset your password and unlock your account.`,
+            };
+          }
+          const remaining = 3 - attemptsCount;
           return {
             success: false,
-            message: `Incorrect password for staff account "${usernameInput}".`,
+            remainingAttempts: remaining,
+            message: `Incorrect password for staff account "${usernameInput}". (${attemptsCount}/3 failed attempts within 10 mins). You have ${remaining} attempt(s) remaining before account is blocked.`,
           };
         }
+
         if (matchedStaff.status !== 'ACTIVE') {
           return {
             success: false,
@@ -1481,6 +1573,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
         }
 
+        clearFailedLoginAttempts(staffKey);
         setIsAuthenticated(true);
         if (storeOwnerUser) {
           setCurrentUser(storeOwnerUser);
@@ -1504,14 +1597,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // Password check if password is set on user
-    const isMasterPass = cleanPass === 'demo123' || cleanPass === 'pass123' || cleanPass === 'admin123' || cleanPass === 'admin';
-    if (matchedUser.password && matchedUser.password !== cleanPass && !isMasterPass) {
+    const userKey = matchedUser.id || matchedUser.email.toLowerCase();
+    const recentAttempts = getRecentFailedAttemptsCount(userKey);
+
+    // 1. Check if account is ALREADY blocked
+    if (matchedUser.status === 'BLOCKED' || recentAttempts >= 3) {
+      if (matchedUser.status !== 'BLOCKED') {
+        setRegisteredUsers((prev) =>
+          prev.map((u) => (u.id === matchedUser.id ? { ...u, status: 'BLOCKED', blockedAt: new Date().toISOString() } : u))
+        );
+      }
       return {
         success: false,
-        message: `Incorrect password for "${usernameInput}". Please try again.`,
+        isBlocked: true,
+        message: `Account for "${usernameInput}" is BLOCKED due to 3 incorrect password attempts within 10 minutes. Please reset your password using "Forgot Password" to unlock your account.`,
       };
     }
+
+    // 2. Check password
+    const isMasterPass = cleanPass === 'demo123' || cleanPass === 'pass123' || cleanPass === 'admin123' || cleanPass === 'admin';
+    if (matchedUser.password && matchedUser.password !== cleanPass && !isMasterPass) {
+      const { attemptsCount, isNowBlocked } = recordFailedLoginAttempt(userKey);
+
+      if (isNowBlocked) {
+        setRegisteredUsers((prev) =>
+          prev.map((u) => (u.id === matchedUser.id ? { ...u, status: 'BLOCKED', blockedAt: new Date().toISOString() } : u))
+        );
+        return {
+          success: false,
+          isBlocked: true,
+          message: `Account BLOCKED! You entered an incorrect password 3 times within 10 minutes. Please click 'Forgot Password' below to reset your password and unlock your account.`,
+        };
+      }
+
+      const remaining = 3 - attemptsCount;
+      return {
+        success: false,
+        remainingAttempts: remaining,
+        message: `Incorrect password for "${usernameInput}". (${attemptsCount}/3 failed attempts within 10 mins). You have ${remaining} attempt(s) remaining before your account is blocked.`,
+      };
+    }
+
+    // Password is correct! Clear failed attempts
+    clearFailedLoginAttempts(userKey);
 
     // Check status & expiry
     if (matchedUser.status === 'PENDING_APPROVAL') {
@@ -1982,15 +2110,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Helper for error-resilient table syncing to Supabase (batch upsert with item-by-item fallback)
+  // Helper for error-resilient table syncing to Supabase (batch upsert with silent error handling)
   const safeSyncTable = async (tableName: string, dataArray: any[], altTableName?: string) => {
-    return;
+    if (!dataArray || dataArray.length === 0) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+    const performSync = async (targetTable: string) => {
+      try {
+        const { error } = await supabase.from(targetTable).upsert(dataArray, { onConflict: 'id' });
+        if (error) {
+          const msg = error.message || '';
+          const isSchemaOrRlsError =
+            msg.includes('schema cache') ||
+            msg.includes('does not exist') ||
+            msg.includes('column') ||
+            msg.includes('row-level security') ||
+            msg.includes('policy') ||
+            msg.includes('permission denied') ||
+            error.code === '42P01' ||
+            error.code === '42703';
+
+          if (!isSchemaOrRlsError) {
+            for (const item of dataArray) {
+              try {
+                await supabase.from(targetTable).upsert(item, { onConflict: 'id' });
+              } catch (singleErr) {
+                // silent ignore
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // silent catch
+      }
+    };
+
+    await performSync(tableName);
+    if (altTableName) {
+      await performSync(altTableName);
+    }
   };
 
   // Sync ALL recorded data (Sales, Purchases, Customers, Suppliers, Udharos, Khata details, Products, Expenses, Supplier Advances, Logs & Accounts) to Supabase
   const syncAllDataToSupabase = async () => {
-    return;
-
     const uId = activeStoreUser?.id || currentUser?.id || 'anonymous';
     const sCode = activeStoreUser?.shopCode || currentUser?.shopCode || shopProfile?.shopCode || 'N/A';
     const sName = activeStoreUser?.shopName || currentUser?.shopName || shopProfile?.shopName || 'Retail Store';
@@ -2064,16 +2226,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // quiet ignore
       }
     } catch (e) {
-      console.warn('Sync registered_users notice:', e);
+      // quiet catch
     }
 
     // 1. Sync Sales / Invoices & Invoice Items
     try {
       if (currInvoices.length > 0) {
         const salesData = currInvoices.map((inv) => ({
-          id: toValidUuid(String(inv.id)),
+          id: String(inv.id),
           invoice_no: inv.invoiceNo,
-          customer_id: inv.customerId ? toValidUuid(String(inv.customerId)) : null,
+          customer_id: inv.customerId ? String(inv.customerId) : null,
           customer_name: inv.customerName,
           customer_phone: inv.customerPhone,
           items: inv.items,
@@ -2085,6 +2247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           payment_status: inv.paymentStatus,
           cashier_name: inv.cashierName,
           created_at: inv.createdAt,
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2094,16 +2257,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Sync individual invoice items
         const allInvoiceItems = currInvoices.flatMap((inv) =>
           (inv.items || []).map((item, idx) => ({
-            id: toValidUuid(`${inv.id}-item-${idx}`),
-            invoice_id: toValidUuid(String(inv.id)),
+            id: `${inv.id}-item-${idx}`,
+            invoice_id: String(inv.id),
             invoice_no: inv.invoiceNo,
-            product_id: item.productId ? toValidUuid(item.productId) : null,
+            product_id: item.productId ? String(item.productId) : null,
             product_name: item.productName || (item as any).name || '',
             quantity: item.quantity || 1,
             unit_price: item.unitPrice || (item as any).price || 0,
             subtotal: item.totalAmount || ((item.quantity || 1) * (item.unitPrice || 0)) || 0,
             discount: item.discount || 0,
             total_amount: item.totalAmount || 0,
+            shop_name: sName,
             shop_code: sCode,
             user_id: uId,
             created_at: inv.createdAt || nowIso,
@@ -2113,18 +2277,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('invoice_items', allInvoiceItems);
       }
     } catch (e) {
-      console.warn('Sync invoices notice:', e);
+      // quiet catch
     }
 
     // 1b. Sync Sales Returns
     try {
       if (currSalesReturns && currSalesReturns.length > 0) {
         const srData = currSalesReturns.map((sr) => ({
-          id: toValidUuid(sr.id),
+          id: String(sr.id),
           return_no: sr.returnNo,
-          invoice_id: sr.invoiceId ? toValidUuid(String(sr.invoiceId)) : null,
+          invoice_id: sr.invoiceId ? String(sr.invoiceId) : null,
           invoice_no: sr.invoiceNo,
-          customer_id: sr.customerId ? toValidUuid(sr.customerId) : null,
+          customer_id: sr.customerId ? String(sr.customerId) : null,
           customer_name: sr.customerName,
           items: sr.items,
           total_refund_amount: sr.totalRefundAmount,
@@ -2133,6 +2297,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return_date: sr.returnDate,
           recorded_by: sr.recordedBy || '',
           created_at: sr.createdAt || nowIso,
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2140,16 +2305,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('sales_returns', srData);
       }
     } catch (e) {
-      console.warn('Sync sales_returns notice:', e);
+      // quiet catch
     }
 
     // 2. Sync Stock Purchases & Purchase Items
     try {
       if (currPurchases.length > 0) {
         const purchasesData = currPurchases.map((pur) => ({
-          id: toValidUuid(pur.id),
+          id: String(pur.id),
           purchase_no: pur.purchaseNo,
-          supplier_id: pur.supplierId ? toValidUuid(pur.supplierId) : null,
+          supplier_id: pur.supplierId ? String(pur.supplierId) : null,
           supplier_name: pur.supplierName,
           invoice_ref: pur.invoiceRef,
           items: pur.items,
@@ -2159,6 +2324,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           purchase_date: pur.purchaseDate,
           notes: pur.notes || '',
           performed_by: pur.performedBy || '',
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2168,15 +2334,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Sync individual purchase items
         const allPurchaseItems = currPurchases.flatMap((pur) =>
           (pur.items || []).map((item, idx) => ({
-            id: toValidUuid(`${pur.id}-item-${idx}`),
-            purchase_id: toValidUuid(pur.id),
+            id: `${pur.id}-item-${idx}`,
+            purchase_id: String(pur.id),
             purchase_no: pur.purchaseNo,
-            product_id: item.productId ? toValidUuid(item.productId) : null,
+            product_id: item.productId ? String(item.productId) : null,
             product_name: item.productName || (item as any).name || '',
             quantity: item.quantity || 1,
             purchase_price: item.purchasePrice || (item as any).unitPrice || 0,
             subtotal: item.totalAmount || ((item.quantity || 1) * (item.purchasePrice || 0)) || 0,
             total_amount: item.totalAmount || 0,
+            shop_name: sName,
             shop_code: sCode,
             user_id: uId,
             created_at: pur.purchaseDate || pur.createdAt || nowIso,
@@ -2186,18 +2353,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('purchase_items', allPurchaseItems);
       }
     } catch (e) {
-      console.warn('Sync purchases notice:', e);
+      // quiet catch
     }
 
     // 2b. Sync Purchase Returns
     try {
       if (currPurchaseReturns && currPurchaseReturns.length > 0) {
         const prData = currPurchaseReturns.map((pr) => ({
-          id: toValidUuid(pr.id),
+          id: String(pr.id),
           return_no: pr.returnNo,
-          purchase_id: pr.purchaseId ? toValidUuid(pr.purchaseId) : null,
+          purchase_id: pr.purchaseId ? String(pr.purchaseId) : null,
           purchase_no: pr.purchaseNo,
-          supplier_id: pr.supplierId ? toValidUuid(pr.supplierId) : null,
+          supplier_id: pr.supplierId ? String(pr.supplierId) : null,
           supplier_name: pr.supplierName,
           items: pr.items,
           total_refund_amount: pr.totalRefundAmount,
@@ -2206,6 +2373,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return_date: pr.returnDate,
           recorded_by: pr.recordedBy || '',
           created_at: pr.createdAt || nowIso,
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2213,14 +2381,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('purchase_returns', prData);
       }
     } catch (e) {
-      console.warn('Sync purchase_returns notice:', e);
+      // quiet catch
     }
 
     // 3. Sync Customers & Customer Advance Payments
     try {
       if (currCustomers.length > 0) {
         const customersData = currCustomers.map((c) => ({
-          id: toValidUuid(c.id),
+          id: String(c.id),
           name: c.name,
           phone: c.phone,
           email: c.email || '',
@@ -2232,6 +2400,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           advance_balance: c.advanceBalance || 0,
           last_purchase_date: c.lastPurchaseDate || '',
           created_at: c.createdAt,
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2241,8 +2410,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const custAdvanceList = currCustomers
           .filter((c) => (c.advanceBalance || 0) > 0)
           .map((c) => ({
-            id: toValidUuid(`CUST-ADV-${c.id}`),
-            customer_id: toValidUuid(c.id),
+            id: `CUST-ADV-${c.id}`,
+            customer_id: String(c.id),
             customer_name: c.name,
             customer_phone: c.phone || '',
             amount: c.advanceBalance || 0,
@@ -2251,6 +2420,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             notes: `Customer Advance Deposit Balance for ${c.name}`,
             recorded_by: 'SYSTEM',
             created_at: c.createdAt || nowIso,
+            shop_name: sName,
             shop_code: sCode,
             user_id: uId,
             synced_at: nowIso,
@@ -2259,8 +2429,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const khataCustAdv = currKhata
           .filter((k) => k.entityType === 'CUSTOMER' && (k.note?.toLowerCase().includes('advance') || k.type === 'PAYMENT'))
           .map((k) => ({
-            id: toValidUuid(`KADV-${k.id}`),
-            customer_id: k.entityId ? toValidUuid(k.entityId) : null,
+            id: `KADV-${k.id}`,
+            customer_id: k.entityId ? String(k.entityId) : null,
             customer_name: k.entityName,
             customer_phone: '',
             amount: k.amount,
@@ -2269,6 +2439,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             notes: k.note || `Customer Payment/Advance from ${k.entityName}`,
             recorded_by: k.performedBy || '',
             created_at: k.createdAt || nowIso,
+            shop_name: sName,
             shop_code: sCode,
             user_id: uId,
             synced_at: nowIso,
@@ -2277,14 +2448,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('customer_advance_payments', [...custAdvanceList, ...khataCustAdv]);
       }
     } catch (e) {
-      console.warn('Sync customers notice:', e);
+      // quiet catch
     }
 
     // 4. Sync Suppliers
     try {
       if (currSuppliers.length > 0) {
         const suppliersData = currSuppliers.map((s) => ({
-          id: toValidUuid(s.id),
+          id: String(s.id),
           name: s.name,
           company_name: s.companyName || '',
           phone: s.phone || '',
@@ -2295,6 +2466,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           pending_payable: s.pendingPayable || 0,
           advance_balance: s.advanceBalance || 0,
           created_at: s.createdAt,
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2302,25 +2474,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('suppliers', suppliersData);
       }
     } catch (e) {
-      console.warn('Sync suppliers notice:', e);
+      // quiet catch
     }
 
     // 5. Sync Udharos & Khata Transactions
     try {
       if (currKhata.length > 0) {
         const khataData = currKhata.map((k) => ({
-          id: toValidUuid(k.id),
+          id: String(k.id),
           entity_type: k.entityType,
-          entity_id: k.entityId ? toValidUuid(k.entityId) : null,
+          entity_id: k.entityId ? String(k.entityId) : null,
           entity_name: k.entityName,
           type: k.type,
           amount: k.amount,
           payment_method: k.paymentMethod || 'CASH',
-          reference_invoice_id: k.referenceInvoiceId ? toValidUuid(k.referenceInvoiceId) : null,
+          reference_invoice_id: k.referenceInvoiceId ? String(k.referenceInvoiceId) : null,
           note: k.note || '',
           created_at: k.createdAt,
           balance_after: k.balanceAfter || 0,
           performed_by: k.performedBy || '',
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2329,14 +2502,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('khata_details', khataData);
       }
     } catch (e) {
-      console.warn('Sync khata notice:', e);
+      // quiet catch
     }
 
     // 6. Sync Products
     try {
       if (currProducts.length > 0) {
         const productsData = currProducts.map((p) => ({
-          id: toValidUuid(p.id),
+          id: String(p.id),
           sku: p.sku || '',
           barcode: p.barcode || '',
           carton_barcode: p.cartonBarcode || '',
@@ -2345,10 +2518,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           stock_qty: p.stockQty,
           min_stock_alert: p.minStockAlert,
           unit: p.unit,
-          supplier_id: p.supplierId ? toValidUuid(p.supplierId) : null,
+          supplier_id: p.supplierId ? String(p.supplierId) : null,
           supplier_name: p.supplierName || '',
           created_at: p.createdAt,
           updated_at: p.updatedAt,
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2356,14 +2530,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('products', productsData);
       }
     } catch (e) {
-      console.warn('Sync products notice:', e);
+      // quiet catch
     }
 
     // 7. Sync Expenses
     try {
       if (currExpenses.length > 0) {
         const expensesData = currExpenses.map((e) => ({
-          id: toValidUuid(e.id),
+          id: String(e.id),
           expense_no: e.expenseNo,
           category: e.category,
           title: e.title,
@@ -2373,22 +2547,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           notes: e.notes || '',
           expense_date: e.expenseDate,
           created_at: e.createdAt,
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
         }));
-        await safeSyncTable('expenses', expensesData);
+        await safeSyncTable('expenses', expensesData, 'shop_expenses');
       }
     } catch (e) {
-      console.warn('Sync expenses notice:', e);
+      // quiet catch
     }
 
     // 8. Sync Supplier Advance Payments
     try {
       if (currSuppAdv && currSuppAdv.length > 0) {
         const suppAdvData = currSuppAdv.map((sa) => ({
-          id: toValidUuid(sa.id),
-          supplier_id: sa.supplierId ? toValidUuid(sa.supplierId) : null,
+          id: String(sa.id),
+          supplier_id: sa.supplierId ? String(sa.supplierId) : null,
           supplier_name: sa.supplierName,
           amount: sa.amount,
           payment_method: sa.paymentMethod,
@@ -2396,6 +2571,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           notes: sa.notes || '',
           recorded_by: sa.recordedBy || '',
           created_at: sa.createdAt,
+          shop_name: sName,
           shop_code: sCode,
           user_id: uId,
           synced_at: nowIso,
@@ -2403,7 +2579,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('supplier_advance_payments', suppAdvData);
       }
     } catch (e) {
-      console.warn('Sync supplier_advance_payments notice:', e);
+      // quiet catch
     }
 
     // 8b. Sync Shop Profile
@@ -2430,14 +2606,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await safeSyncTable('shop_profiles', [spData]);
       }
     } catch (e) {
-      console.warn('Sync shop_profiles notice:', e);
+      // quiet catch
     }
 
     // 9. Sync Activity Logs
     try {
       await syncPendingActivitiesToSupabase();
     } catch (e) {
-      console.warn('Sync activity logs notice:', e);
+      // quiet catch
     }
 
     // 10. Sync Full Store Backup Snapshot
@@ -2462,7 +2638,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await safeSyncTable('store_snapshots', [snapshotPayload], 'dukaan_store_snapshots');
       await safeSyncTable('store_backups', [snapshotPayload]);
     } catch (e) {
-      console.warn('Sync snapshot notice:', e);
+      // quiet catch
     }
 
       setCloudBackup((prev) => ({
@@ -2473,11 +2649,534 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }));
   };
 
-  // Monitor network status & periodic auto-sync to Supabase every 10 seconds
+  // Fetch shop-specific data from Supabase DB every 10 seconds and deduplicate smartly
+  const fetchDataFromSupabase = async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    const sCode = activeStoreUser?.shopCode || currentUser?.shopCode || shopProfile?.shopCode;
+    if (!sCode || sCode === 'N/A') return;
+
+    try {
+      // 1. Fetch Products for active shop code & deduplicate smartly
+      const { data: remoteProducts } = await supabase.from('products').select('*').eq('shop_code', sCode);
+      if (remoteProducts && remoteProducts.length > 0) {
+        setProducts((prev) => {
+          let updatedList = [...prev];
+          let changed = false;
+
+          remoteProducts.forEach((r: any) => {
+            if (!r.id || deletedRecordIds.has(r.id)) return;
+            const rId = String(r.id);
+            const rBarcode = (r.barcode || '').trim();
+            const rSku = (r.sku || '').trim().toLowerCase();
+            const rName = (r.name || '').trim().toLowerCase();
+
+            const mapped: Product = {
+              id: rId,
+              sku: r.sku || '',
+              barcode: r.barcode || '',
+              cartonBarcode: r.carton_barcode || '',
+              name: r.name,
+              category: r.category || 'General',
+              stockQty: Number(r.stock_qty || 0),
+              minStockAlert: Number(r.min_stock_alert || 5),
+              unit: r.unit || { buyUnit: 'Pcs', sellUnit: 'Pcs', conversionFactor: 1 },
+              supplierId: r.supplier_id || '',
+              supplierName: r.supplier_name || '',
+              createdAt: r.created_at || new Date().toISOString(),
+              updatedAt: r.updated_at || new Date().toISOString(),
+            };
+
+            const idx = updatedList.findIndex((p) => {
+              if (p.id === rId || toValidUuid(p.id) === rId || p.id === toValidUuid(rId)) return true;
+              if (rBarcode && rBarcode !== 'N/A' && p.barcode && p.barcode.trim() === rBarcode) return true;
+              if (rSku && rSku !== 'N/A' && p.sku && p.sku.trim().toLowerCase() === rSku) return true;
+              if (rName && p.name && p.name.trim().toLowerCase() === rName) return true;
+              return false;
+            });
+
+            if (idx >= 0) {
+              const existing = updatedList[idx];
+              const merged: Product = {
+                ...mapped,
+                id: existing.id, // preserve primary local ID
+              };
+              if (existing.stockQty !== merged.stockQty || existing.name !== merged.name) {
+                updatedList[idx] = merged;
+                changed = true;
+              }
+            } else {
+              updatedList.push(mapped);
+              changed = true;
+            }
+          });
+
+          // Deduplicate local products list to eliminate legacy duplicates
+          const seen = new Set<string>();
+          const deduped: Product[] = [];
+          for (const p of updatedList) {
+            const key = (p.barcode && p.barcode !== 'N/A' ? `bc-${p.barcode}` : '') ||
+                        (p.sku && p.sku !== 'N/A' ? `sku-${p.sku}` : '') ||
+                        `name-${p.name.trim().toLowerCase()}`;
+            if (!seen.has(p.id) && !seen.has(key)) {
+              seen.add(p.id);
+              seen.add(key);
+              deduped.push(p);
+            } else {
+              changed = true;
+            }
+          }
+
+          return changed ? deduped : prev;
+        });
+      }
+
+      // 2. Fetch Customers for active shop code & deduplicate
+      const { data: remoteCustomers } = await supabase.from('customers').select('*').eq('shop_code', sCode);
+      if (remoteCustomers && remoteCustomers.length > 0) {
+        setCustomers((prev) => {
+          let updatedList = [...prev];
+          let changed = false;
+
+          remoteCustomers.forEach((r: any) => {
+            if (!r.id || deletedRecordIds.has(r.id)) return;
+            const rId = String(r.id);
+            const rPhone = (r.phone || '').trim();
+            const rName = (r.name || '').trim().toLowerCase();
+
+            const mapped: Customer = {
+              id: rId,
+              name: r.name,
+              phone: r.phone || '',
+              email: r.email || '',
+              address: r.address || '',
+              panVat: r.pan_vat || '',
+              creditLimit: Number(r.credit_limit || 0),
+              totalPurchases: Number(r.total_purchases || 0),
+              currentBalance: Number(r.current_balance || 0),
+              advanceBalance: Number(r.advance_balance || 0),
+              lastPurchaseDate: r.last_purchase_date || '',
+              createdAt: r.created_at || new Date().toISOString(),
+            };
+
+            const idx = updatedList.findIndex((c) => {
+              if (c.id === rId || toValidUuid(c.id) === rId || c.id === toValidUuid(rId)) return true;
+              if (rPhone && rPhone !== 'N/A' && c.phone && c.phone.trim() === rPhone) return true;
+              if (rName && c.name && c.name.trim().toLowerCase() === rName) return true;
+              return false;
+            });
+
+            if (idx >= 0) {
+              const existing = updatedList[idx];
+              updatedList[idx] = { ...mapped, id: existing.id };
+              changed = true;
+            } else {
+              updatedList.push(mapped);
+              changed = true;
+            }
+          });
+
+          // Deduplicate
+          const seen = new Set<string>();
+          const deduped: Customer[] = [];
+          for (const c of updatedList) {
+            const key = (c.phone && c.phone !== 'N/A' ? `ph-${c.phone}` : '') || `name-${c.name.trim().toLowerCase()}`;
+            if (!seen.has(c.id) && !seen.has(key)) {
+              seen.add(c.id);
+              seen.add(key);
+              deduped.push(c);
+            } else {
+              changed = true;
+            }
+          }
+
+          return changed ? deduped : prev;
+        });
+      }
+
+      // 3. Fetch Suppliers for active shop code & deduplicate
+      const { data: remoteSuppliers } = await supabase.from('suppliers').select('*').eq('shop_code', sCode);
+      if (remoteSuppliers && remoteSuppliers.length > 0) {
+        setSuppliers((prev) => {
+          let updatedList = [...prev];
+          let changed = false;
+
+          remoteSuppliers.forEach((r: any) => {
+            if (!r.id || deletedRecordIds.has(r.id)) return;
+            const rId = String(r.id);
+            const rPhone = (r.phone || '').trim();
+            const rName = (r.name || '').trim().toLowerCase();
+
+            const mapped: Supplier = {
+              id: rId,
+              name: r.name,
+              companyName: r.company_name || '',
+              phone: r.phone || '',
+              email: r.email || '',
+              address: r.address || '',
+              panVat: r.pan_vat || '',
+              totalPurchased: Number(r.total_purchased || 0),
+              pendingPayable: Number(r.pending_payable || 0),
+              advanceBalance: Number(r.advance_balance || 0),
+              createdAt: r.created_at || new Date().toISOString(),
+            };
+
+            const idx = updatedList.findIndex((s) => {
+              if (s.id === rId || toValidUuid(s.id) === rId || s.id === toValidUuid(rId)) return true;
+              if (rPhone && rPhone !== 'N/A' && s.phone && s.phone.trim() === rPhone) return true;
+              if (rName && s.name && s.name.trim().toLowerCase() === rName) return true;
+              return false;
+            });
+
+            if (idx >= 0) {
+              const existing = updatedList[idx];
+              updatedList[idx] = { ...mapped, id: existing.id };
+              changed = true;
+            } else {
+              updatedList.push(mapped);
+              changed = true;
+            }
+          });
+
+          // Deduplicate
+          const seen = new Set<string>();
+          const deduped: Supplier[] = [];
+          for (const s of updatedList) {
+            const key = (s.phone && s.phone !== 'N/A' ? `ph-${s.phone}` : '') || `name-${s.name.trim().toLowerCase()}`;
+            if (!seen.has(s.id) && !seen.has(key)) {
+              seen.add(s.id);
+              seen.add(key);
+              deduped.push(s);
+            } else {
+              changed = true;
+            }
+          }
+
+          return changed ? deduped : prev;
+        });
+      }
+
+      // 4. Fetch Invoices for active shop code & deduplicate
+      let { data: remoteInvoices } = await supabase.from('invoices').select('*').eq('shop_code', sCode);
+      if (!remoteInvoices || remoteInvoices.length === 0) {
+        const { data: altInv } = await supabase.from('sales').select('*').eq('shop_code', sCode);
+        if (altInv && altInv.length > 0) remoteInvoices = altInv;
+      }
+      if (remoteInvoices && remoteInvoices.length > 0) {
+        setInvoices((prev) => {
+          let updatedList = [...prev];
+          let changed = false;
+
+          remoteInvoices.forEach((r: any) => {
+            if (!r.id || deletedRecordIds.has(r.id)) return;
+            const rId = String(r.id);
+            const rNo = (r.invoice_no || '').trim();
+
+            const mapped: Invoice = {
+              id: rId,
+              invoiceNo: r.invoice_no,
+              customerId: r.customer_id || '',
+              customerName: r.customer_name || 'Walk-in Customer',
+              customerPhone: r.customer_phone || '',
+              items: r.items || [],
+              subtotal: Number(r.subtotal || 0),
+              discount: Number(r.discount || 0),
+              taxAmount: Number(r.tax_amount || 0),
+              netAmount: Number(r.net_amount || 0),
+              splitPayment: r.split_payment || { cash: 0, bank: 0, esewa: 0, credit: 0 },
+              paymentStatus: r.payment_status || 'PAID',
+              cashierName: r.cashier_name || 'POS User',
+              createdAt: r.created_at || new Date().toISOString(),
+            };
+
+            const idx = updatedList.findIndex((i) => {
+              if (i.id === rId || toValidUuid(i.id) === rId || i.id === toValidUuid(rId)) return true;
+              if (rNo && i.invoiceNo && i.invoiceNo.trim() === rNo) return true;
+              return false;
+            });
+
+            if (idx >= 0) {
+              const existing = updatedList[idx];
+              updatedList[idx] = { ...mapped, id: existing.id };
+            } else {
+              updatedList.push(mapped);
+              changed = true;
+            }
+          });
+
+          const seen = new Set<string>();
+          const deduped: Invoice[] = [];
+          for (const i of updatedList) {
+            const key = i.invoiceNo ? `inv-${i.invoiceNo}` : i.id;
+            if (!seen.has(i.id) && !seen.has(key)) {
+              seen.add(i.id);
+              seen.add(key);
+              deduped.push(i);
+            } else {
+              changed = true;
+            }
+          }
+
+          return changed ? deduped : prev;
+        });
+      }
+
+      // 5. Fetch Purchases for active shop code & deduplicate
+      let { data: remotePurchases } = await supabase.from('purchases').select('*').eq('shop_code', sCode);
+      if (!remotePurchases || remotePurchases.length === 0) {
+        const { data: altPur } = await supabase.from('stock_purchases').select('*').eq('shop_code', sCode);
+        if (altPur && altPur.length > 0) remotePurchases = altPur;
+      }
+      if (remotePurchases && remotePurchases.length > 0) {
+        setPurchases((prev) => {
+          let updatedList = [...prev];
+          let changed = false;
+
+          remotePurchases.forEach((r: any) => {
+            if (!r.id || deletedRecordIds.has(r.id)) return;
+            const rId = String(r.id);
+            const rNo = (r.purchase_no || '').trim();
+
+            const mapped: StockPurchase = {
+              id: rId,
+              purchaseNo: r.purchase_no,
+              supplierId: r.supplier_id || '',
+              supplierName: r.supplier_name || '',
+              invoiceRef: r.invoice_ref || '',
+              items: r.items || [],
+              totalAmount: Number(r.total_amount || 0),
+              cashPaid: Number(r.cash_paid || 0),
+              supplierCredit: Number(r.supplier_credit || 0),
+              purchaseDate: r.purchase_date || r.created_at,
+              notes: r.notes || '',
+              performedBy: r.performed_by || '',
+            };
+
+            const idx = updatedList.findIndex((p) => {
+              if (p.id === rId || toValidUuid(p.id) === rId || p.id === toValidUuid(rId)) return true;
+              if (rNo && p.purchaseNo && p.purchaseNo.trim() === rNo) return true;
+              return false;
+            });
+
+            if (idx >= 0) {
+              const existing = updatedList[idx];
+              updatedList[idx] = { ...mapped, id: existing.id };
+            } else {
+              updatedList.push(mapped);
+              changed = true;
+            }
+          });
+
+          const seen = new Set<string>();
+          const deduped: StockPurchase[] = [];
+          for (const p of updatedList) {
+            const key = p.purchaseNo ? `pur-${p.purchaseNo}` : p.id;
+            if (!seen.has(p.id) && !seen.has(key)) {
+              seen.add(p.id);
+              seen.add(key);
+              deduped.push(p);
+            } else {
+              changed = true;
+            }
+          }
+
+          return changed ? deduped : prev;
+        });
+      }
+
+      // 6. Fetch Expenses for active shop code & deduplicate
+      let { data: remoteExpenses } = await supabase.from('expenses').select('*').eq('shop_code', sCode);
+      if (!remoteExpenses || remoteExpenses.length === 0) {
+        const { data: altExp } = await supabase.from('shop_expenses').select('*').eq('shop_code', sCode);
+        if (altExp && altExp.length > 0) remoteExpenses = altExp;
+      }
+      if (remoteExpenses && remoteExpenses.length > 0) {
+        setExpenses((prev) => {
+          let updatedList = [...prev];
+          let changed = false;
+
+          remoteExpenses.forEach((r: any) => {
+            if (!r.id || deletedRecordIds.has(r.id)) return;
+            const rId = String(r.id);
+            const rNo = (r.expense_no || '').trim();
+
+            const mapped: Expense = {
+              id: rId,
+              expenseNo: r.expense_no,
+              category: r.category || 'General',
+              title: r.title || 'Expense',
+              amount: Number(r.amount || 0),
+              paymentMethod: r.payment_method || 'CASH',
+              paidTo: r.paid_to || '',
+              notes: r.notes || '',
+              expenseDate: r.expense_date || r.created_at,
+              createdAt: r.created_at,
+            };
+
+            const idx = updatedList.findIndex((e) => {
+              if (e.id === rId || toValidUuid(e.id) === rId || e.id === toValidUuid(rId)) return true;
+              if (rNo && e.expenseNo && e.expenseNo.trim() === rNo) return true;
+              return false;
+            });
+
+            if (idx >= 0) {
+              const existing = updatedList[idx];
+              updatedList[idx] = { ...mapped, id: existing.id };
+            } else {
+              updatedList.push(mapped);
+              changed = true;
+            }
+          });
+
+          const seen = new Set<string>();
+          const deduped: Expense[] = [];
+          for (const e of updatedList) {
+            const key = e.expenseNo ? `exp-${e.expenseNo}` : e.id;
+            if (!seen.has(e.id) && !seen.has(key)) {
+              seen.add(e.id);
+              seen.add(key);
+              deduped.push(e);
+            } else {
+              changed = true;
+            }
+          }
+
+          return changed ? deduped : prev;
+        });
+      }
+
+      // 7. Fetch Khata Transactions for active shop code & deduplicate
+      let { data: remoteKhata } = await supabase.from('khata_transactions').select('*').eq('shop_code', sCode);
+      if (!remoteKhata || remoteKhata.length === 0) {
+        const { data: altKhata } = await supabase.from('udharo_khata').select('*').eq('shop_code', sCode);
+        if (altKhata && altKhata.length > 0) remoteKhata = altKhata;
+      }
+      if (remoteKhata && remoteKhata.length > 0) {
+        setKhataTransactions((prev) => {
+          let updatedList = [...prev];
+          let changed = false;
+
+          remoteKhata.forEach((r: any) => {
+            if (!r.id || deletedRecordIds.has(r.id)) return;
+            const rId = String(r.id);
+
+            const mapped: KhataTransaction = {
+              id: rId,
+              entityType: r.entity_type,
+              entityId: r.entity_id || '',
+              entityName: r.entity_name || '',
+              type: r.type,
+              amount: Number(r.amount || 0),
+              paymentMethod: r.payment_method || 'CASH',
+              referenceInvoiceId: r.reference_invoice_id || '',
+              note: r.note || '',
+              createdAt: r.created_at,
+              balanceAfter: Number(r.balance_after || 0),
+              performedBy: r.performed_by || '',
+            };
+
+            const idx = updatedList.findIndex((k) => k.id === rId || toValidUuid(k.id) === rId || k.id === toValidUuid(rId));
+            if (idx >= 0) {
+              const existing = updatedList[idx];
+              updatedList[idx] = { ...mapped, id: existing.id };
+            } else {
+              updatedList.push(mapped);
+              changed = true;
+            }
+          });
+
+          const seen = new Set<string>();
+          const deduped: KhataTransaction[] = [];
+          for (const k of updatedList) {
+            if (!seen.has(k.id)) {
+              seen.add(k.id);
+              deduped.push(k);
+            } else {
+              changed = true;
+            }
+          }
+
+          return changed ? deduped : prev;
+        });
+      }
+
+      // Reconcile product stock against transaction history
+      reconcileProductsWithHistory();
+    } catch (e) {
+      // quiet catch
+    }
+  };
+
+  // Reconcile Product Stock Levels from Purchase & Sales History to fix any trigger-inflated stock values
+  const reconcileProductsWithHistory = () => {
+    setProducts((currentProducts) => {
+      let changed = false;
+      const updated = currentProducts.map((p) => {
+        const matchingPurchases = purchasesRef.current.flatMap((pur) => pur.items || []).filter((item) => {
+          if (item.productId && (item.productId === p.id || toValidUuid(item.productId) === String(p.id) || String(item.productId) === toValidUuid(p.id))) return true;
+          if (p.sku && p.sku !== 'N/A' && item.sku && item.sku.trim() === p.sku.trim()) return true;
+          if (p.barcode && p.barcode !== 'N/A' && item.barcode && item.barcode.trim() === p.barcode.trim()) return true;
+          if (p.name && item.productName && item.productName.trim().toLowerCase() === p.name.trim().toLowerCase()) return true;
+          return false;
+        });
+
+        const totalPurchased = matchingPurchases.reduce((sum, item) => {
+          const isSecondary = item.unitName && p.unit && item.unitName === p.unit.secondaryUnit;
+          const ratio = isSecondary ? (p.unit?.conversionRatio || 1) : 1;
+          return sum + (Number(item.quantity) || 0) * ratio;
+        }, 0);
+
+        // Only reconcile if purchases exist for this product
+        if (totalPurchased <= 0) return p;
+
+        const matchingInvoices = invoicesRef.current.flatMap((inv) => inv.items || []).filter((item: any) => {
+          const pId = item.productId || item.id;
+          if (pId && (pId === p.id || toValidUuid(pId) === String(pId) || String(pId) === toValidUuid(p.id))) return true;
+          if (p.sku && p.sku !== 'N/A' && item.sku && item.sku.trim() === p.sku.trim()) return true;
+          if (p.barcode && p.barcode !== 'N/A' && item.barcode && item.barcode.trim() === p.barcode.trim()) return true;
+          if (p.name && (item.productName || item.name) && (item.productName || item.name).trim().toLowerCase() === p.name.trim().toLowerCase()) return true;
+          return false;
+        });
+
+        const totalSold = matchingInvoices.reduce((sum, item: any) => {
+          const isSecondary = item.selectedUnit === 'SECONDARY' || (item.unitName && p.unit && item.unitName === p.unit.secondaryUnit);
+          const ratio = isSecondary ? (p.unit?.conversionRatio || 1) : 1;
+          return sum + (Number(item.quantity) || 1) * ratio;
+        }, 0);
+
+        const totalSR = salesReturnsRef.current.flatMap((sr) => sr.items || []).filter((item) => item.productId === p.id || (item.productName && item.productName.trim().toLowerCase() === p.name.trim().toLowerCase()))
+          .reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+
+        const totalPR = purchaseReturnsRef.current.flatMap((pr) => pr.items || []).filter((item) => item.productId === p.id || (item.productName && item.productName.trim().toLowerCase() === p.name.trim().toLowerCase()))
+          .reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+
+        const expectedStock = Math.max(0, totalPurchased - totalSold + totalSR - totalPR);
+
+        // If current stockQty differs from expected stock from purchase & sales history, reconcile it!
+        if (p.stockQty !== expectedStock) {
+          changed = true;
+          return {
+            ...p,
+            stockQty: expectedStock,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return p;
+      });
+
+      if (changed) {
+        setTimeout(() => syncAllDataToSupabase(), 300);
+      }
+
+      return changed ? updated : currentProducts;
+    });
+  };
+
+  // Monitor network status & periodic auto-sync to Supabase every 10 seconds (Push & Fetch)
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
       syncAllDataToSupabase();
+      fetchDataFromSupabase();
     };
 
     const handleOffline = () => {
@@ -2490,13 +3189,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (navigator.onLine) {
         syncAllDataToSupabase();
+        fetchDataFromSupabase();
       }
 
       const interval = setInterval(() => {
         if (navigator.onLine) {
           syncAllDataToSupabase();
+          fetchDataFromSupabase();
         }
-      }, 10000); // Send all recorded data to Supabase every 10 seconds in background
+      }, 10000); // Send and fetch data from Supabase every 10 seconds
 
       return () => {
         window.removeEventListener('online', handleOnline);
@@ -2506,7 +3207,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Supabase Realtime Subscription for live updates (INSERT, UPDATE, DELETE) across tables
+  // Supabase Realtime Subscription for live updates (INSERT, UPDATE, DELETE) filtered by shop code
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -2519,6 +3220,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const { eventType, table, new: newRecord, old: oldRecord } = payload;
           const recordId = (newRecord as any)?.id || (oldRecord as any)?.id;
           if (!recordId) return;
+
+          const recShopCode = (newRecord as any)?.shop_code || (oldRecord as any)?.shop_code;
+          const activeShopCode = activeStoreUser?.shopCode || currentUser?.shopCode || shopProfile?.shopCode;
+          if (recShopCode && activeShopCode && recShopCode.toLowerCase() !== activeShopCode.toLowerCase()) {
+            return; // Strict filter: Ignore events from other shops
+          }
 
           if (eventType === 'DELETE') {
             setDeletedRecordIds((prev) => {
@@ -2550,57 +3257,176 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (deletedRecordIds.has(recordId)) return;
 
             if (table === 'products') {
+              const rId = String(newRecord.id);
+              const rBarcode = (newRecord.barcode || '').trim();
+              const rSku = (newRecord.sku || '').trim().toLowerCase();
+              const rName = (newRecord.name || '').trim().toLowerCase();
+
+              const mapped: Product = {
+                id: rId,
+                sku: newRecord.sku || '',
+                barcode: newRecord.barcode || '',
+                cartonBarcode: newRecord.carton_barcode || newRecord.cartonBarcode || '',
+                name: newRecord.name,
+                category: newRecord.category || 'General',
+                stockQty: Number(newRecord.stock_qty ?? newRecord.stockQty ?? 0),
+                minStockAlert: Number(newRecord.min_stock_alert ?? newRecord.minStockAlert ?? 5),
+                unit: newRecord.unit || { buyUnit: 'Pcs', sellUnit: 'Pcs', conversionFactor: 1 },
+                supplierId: newRecord.supplier_id || newRecord.supplierId || '',
+                supplierName: newRecord.supplier_name || newRecord.supplierName || '',
+                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
+                updatedAt: newRecord.updated_at || newRecord.updatedAt || new Date().toISOString(),
+              };
+
               setProducts((prev) => {
-                const exists = prev.some((p) => p.id === newRecord.id);
-                if (exists) {
-                  return prev.map((p) => (p.id === newRecord.id ? ({ ...p, ...newRecord } as Product) : p));
+                const idx = prev.findIndex((p) => {
+                  if (p.id === rId || toValidUuid(p.id) === rId || p.id === toValidUuid(rId)) return true;
+                  if (rBarcode && rBarcode !== 'N/A' && p.barcode && p.barcode.trim() === rBarcode) return true;
+                  if (rSku && rSku !== 'N/A' && p.sku && p.sku.trim().toLowerCase() === rSku) return true;
+                  if (rName && p.name && p.name.trim().toLowerCase() === rName) return true;
+                  return false;
+                });
+
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = { ...mapped, id: prev[idx].id };
+                  return updated;
                 } else {
-                  return [newRecord as Product, ...prev];
+                  return [mapped, ...prev];
                 }
               });
             } else if (table === 'customers') {
+              const rId = String(newRecord.id);
+              const mapped: Customer = {
+                id: rId,
+                name: newRecord.name,
+                phone: newRecord.phone || '',
+                email: newRecord.email || '',
+                address: newRecord.address || '',
+                panVat: newRecord.pan_vat || newRecord.panVat || '',
+                creditLimit: Number(newRecord.credit_limit ?? newRecord.creditLimit ?? 0),
+                totalPurchases: Number(newRecord.total_purchases ?? newRecord.totalPurchases ?? 0),
+                currentBalance: Number(newRecord.current_balance ?? newRecord.currentBalance ?? 0),
+                advanceBalance: Number(newRecord.advance_balance ?? newRecord.advanceBalance ?? 0),
+                lastPurchaseDate: newRecord.last_purchase_date || newRecord.lastPurchaseDate || '',
+                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
+              };
+
               setCustomers((prev) => {
-                const exists = prev.some((c) => c.id === newRecord.id);
-                if (exists) {
-                  return prev.map((c) => (c.id === newRecord.id ? ({ ...c, ...newRecord } as Customer) : c));
+                const idx = prev.findIndex((c) => c.id === rId || toValidUuid(c.id) === rId || c.id === toValidUuid(rId));
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = { ...mapped, id: prev[idx].id };
+                  return updated;
                 } else {
-                  return [newRecord as Customer, ...prev];
+                  return [mapped, ...prev];
                 }
               });
             } else if (table === 'suppliers') {
+              const rId = String(newRecord.id);
+              const mapped: Supplier = {
+                id: rId,
+                name: newRecord.name,
+                companyName: newRecord.company_name || newRecord.companyName || '',
+                phone: newRecord.phone || '',
+                email: newRecord.email || '',
+                address: newRecord.address || '',
+                panVat: newRecord.pan_vat || newRecord.panVat || '',
+                totalPurchased: Number(newRecord.total_purchased ?? newRecord.totalPurchased ?? 0),
+                pendingPayable: Number(newRecord.pending_payable ?? newRecord.pendingPayable ?? 0),
+                advanceBalance: Number(newRecord.advance_balance ?? newRecord.advanceBalance ?? 0),
+                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
+              };
+
               setSuppliers((prev) => {
-                const exists = prev.some((s) => s.id === newRecord.id);
-                if (exists) {
-                  return prev.map((s) => (s.id === newRecord.id ? ({ ...s, ...newRecord } as Supplier) : s));
+                const idx = prev.findIndex((s) => s.id === rId || toValidUuid(s.id) === rId || s.id === toValidUuid(rId));
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = { ...mapped, id: prev[idx].id };
+                  return updated;
                 } else {
-                  return [newRecord as Supplier, ...prev];
+                  return [mapped, ...prev];
                 }
               });
             } else if (table === 'invoices' || table === 'sales') {
+              const rId = String(newRecord.id);
+              const mapped: Invoice = {
+                id: rId,
+                invoiceNo: newRecord.invoice_no || newRecord.invoiceNo,
+                customerId: newRecord.customer_id || newRecord.customerId || '',
+                customerName: newRecord.customer_name || newRecord.customerName || 'Walk-in Customer',
+                customerPhone: newRecord.customer_phone || newRecord.customerPhone || '',
+                items: newRecord.items || [],
+                subtotal: Number(newRecord.subtotal || 0),
+                discount: Number(newRecord.discount || 0),
+                taxAmount: Number(newRecord.tax_amount ?? newRecord.taxAmount ?? 0),
+                netAmount: Number(newRecord.net_amount ?? newRecord.netAmount ?? 0),
+                splitPayment: newRecord.split_payment || newRecord.splitPayment || { cash: 0, bank: 0, esewa: 0, credit: 0 },
+                paymentStatus: newRecord.payment_status || newRecord.paymentStatus || 'PAID',
+                cashierName: newRecord.cashier_name || newRecord.cashierName || 'POS User',
+                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
+              };
+
               setInvoices((prev) => {
-                const exists = prev.some((i) => i.id === newRecord.id);
-                if (exists) {
-                  return prev.map((i) => (i.id === newRecord.id ? ({ ...i, ...newRecord } as Invoice) : i));
+                const idx = prev.findIndex((i) => i.id === rId || i.invoiceNo === mapped.invoiceNo);
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = { ...mapped, id: prev[idx].id };
+                  return updated;
                 } else {
-                  return [newRecord as Invoice, ...prev];
+                  return [mapped, ...prev];
                 }
               });
             } else if (table === 'purchases' || table === 'stock_purchases') {
+              const rId = String(newRecord.id);
+              const mapped: StockPurchase = {
+                id: rId,
+                purchaseNo: newRecord.purchase_no || newRecord.purchaseNo,
+                supplierId: newRecord.supplier_id || newRecord.supplierId || '',
+                supplierName: newRecord.supplier_name || newRecord.supplierName || '',
+                invoiceRef: newRecord.invoice_ref || newRecord.invoiceRef || '',
+                items: newRecord.items || [],
+                totalAmount: Number(newRecord.total_amount ?? newRecord.totalAmount ?? 0),
+                cashPaid: Number(newRecord.cash_paid ?? newRecord.cashPaid ?? 0),
+                supplierCredit: Number(newRecord.supplier_credit ?? newRecord.supplierCredit ?? 0),
+                purchaseDate: newRecord.purchase_date || newRecord.purchaseDate || newRecord.created_at,
+                notes: newRecord.notes || '',
+                performedBy: newRecord.performed_by || newRecord.performedBy || '',
+              };
+
               setPurchases((prev) => {
-                const exists = prev.some((p) => p.id === newRecord.id);
-                if (exists) {
-                  return prev.map((p) => (p.id === newRecord.id ? ({ ...p, ...newRecord } as StockPurchase) : p));
+                const idx = prev.findIndex((p) => p.id === rId || p.purchaseNo === mapped.purchaseNo);
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = { ...mapped, id: prev[idx].id };
+                  return updated;
                 } else {
-                  return [newRecord as StockPurchase, ...prev];
+                  return [mapped, ...prev];
                 }
               });
             } else if (table === 'expenses') {
+              const rId = String(newRecord.id);
+              const mapped: Expense = {
+                id: rId,
+                expenseNo: newRecord.expense_no || newRecord.expenseNo,
+                category: newRecord.category || 'General',
+                title: newRecord.title || 'Expense',
+                amount: Number(newRecord.amount || 0),
+                paymentMethod: newRecord.payment_method || newRecord.paymentMethod || 'CASH',
+                paidTo: newRecord.paid_to || newRecord.paidTo || '',
+                notes: newRecord.notes || '',
+                expenseDate: newRecord.expense_date || newRecord.expenseDate || newRecord.created_at,
+                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
+              };
+
               setExpenses((prev) => {
-                const exists = prev.some((e) => e.id === newRecord.id);
-                if (exists) {
-                  return prev.map((e) => (e.id === newRecord.id ? ({ ...e, ...newRecord } as any) : e));
+                const idx = prev.findIndex((e) => e.id === rId || e.expenseNo === mapped.expenseNo);
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = { ...mapped, id: prev[idx].id };
+                  return updated;
                 } else {
-                  return [newRecord as any, ...prev];
+                  return [mapped, ...prev];
                 }
               });
             } else if (table === 'audit_logs') {
@@ -2910,19 +3736,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         }
 
-        setProducts([]);
-        setCustomers([]);
-        setSuppliers([]);
-        setInvoices([]);
-        setPurchases([]);
-        setKhataTransactions([]);
-        setExpenses([]);
-        setSalesReturns([]);
-        setPurchaseReturns([]);
+        setProducts(Array.isArray(parsed.products) ? parsed.products : []);
+        setCustomers(Array.isArray(parsed.customers) ? parsed.customers : []);
+        setSuppliers(Array.isArray(parsed.suppliers) ? parsed.suppliers : []);
+        setInvoices(Array.isArray(parsed.invoices) ? parsed.invoices : []);
+        setPurchases(Array.isArray(parsed.purchases) ? parsed.purchases : []);
+        setKhataTransactions(Array.isArray(parsed.khataTransactions) ? parsed.khataTransactions : []);
+        setExpenses(Array.isArray(parsed.expenses) ? parsed.expenses : []);
+        setSalesReturns(Array.isArray(parsed.salesReturns) ? parsed.salesReturns : []);
+        setPurchaseReturns(Array.isArray(parsed.purchaseReturns) ? parsed.purchaseReturns : []);
         setStaffList(Array.isArray(parsed.staffList) ? parsed.staffList : INITIAL_STAFF.filter((s) => !s.storeOwnerId || s.storeOwnerId === targetId));
         setStaffPayments(Array.isArray(parsed.staffPayments) ? parsed.staffPayments : INITIAL_STAFF_PAYMENTS);
         setAuditLogs([]);
       } else {
+        // Fallback: check legacy individual local storage keys before resetting
+        let legacyProducts: Product[] = [];
+        let legacyInvoices: Invoice[] = [];
+        let legacyPurchases: StockPurchase[] = [];
+        let legacyCustomers: Customer[] = [];
+        let legacySuppliers: Supplier[] = [];
+        let legacyKhata: KhataTransaction[] = [];
+        let legacyExpenses: Expense[] = [];
+
+        try {
+          const lp = localStorage.getItem('dukaan_products');
+          if (lp) legacyProducts = JSON.parse(lp);
+          const li = localStorage.getItem('dukaan_invoices');
+          if (li) legacyInvoices = JSON.parse(li);
+          const lpur = localStorage.getItem('dukaan_purchases');
+          if (lpur) legacyPurchases = JSON.parse(lpur);
+          const lc = localStorage.getItem('dukaan_customers');
+          if (lc) legacyCustomers = JSON.parse(lc);
+          const ls = localStorage.getItem('dukaan_suppliers');
+          if (ls) legacySuppliers = JSON.parse(ls);
+          const lk = localStorage.getItem(`dukaan_khata_${targetId}`) || localStorage.getItem('dukaan_khata');
+          if (lk) legacyKhata = JSON.parse(lk);
+          const le = localStorage.getItem(`dukaan_expenses_${targetId}`) || localStorage.getItem('dukaan_expenses');
+          if (le) legacyExpenses = JSON.parse(le);
+        } catch (e) {
+          // quiet fallback
+        }
+
         // Initialize fresh personalized shop profile for this specific user
         const freshProfile: ShopProfile = {
           ...INITIAL_SHOP_PROFILE,
@@ -2940,14 +3794,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
         setShopProfile(freshProfile);
 
-        // Fresh isolated store state
-        setProducts([]);
-        setCustomers([]);
-        setSuppliers([]);
-        setInvoices([]);
-        setPurchases([]);
-        setKhataTransactions([]);
-        setExpenses([]);
+        // Load isolated or legacy store state
+        setProducts(legacyProducts);
+        setCustomers(legacyCustomers);
+        setSuppliers(legacySuppliers);
+        setInvoices(legacyInvoices);
+        setPurchases(legacyPurchases);
+        setKhataTransactions(legacyKhata);
+        setExpenses(legacyExpenses);
         setSalesReturns([]);
         setPurchaseReturns([]);
         setStaffList(INITIAL_STAFF.filter((s) => !s.storeOwnerId || s.storeOwnerId === targetId));
@@ -2955,6 +3809,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setAuditLogs([]);
       }
       setLoadedUserId(targetId);
+
+      // Immediately trigger Supabase DB fetch to pull and merge remote records upon load
+      setTimeout(() => {
+        fetchDataFromSupabase();
+      }, 100);
     } catch (e) {
       console.error('Error loading account store data:', e);
       setLoadedUserId(targetId);
@@ -3569,6 +4428,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       details: `Recorded stock purchase ${purchaseNo} from supplier ${supplierObj.name}`,
       amount: totalAmount,
     });
+    setTimeout(() => syncAllDataToSupabase(), 100);
     return newPurchase;
   };
 
