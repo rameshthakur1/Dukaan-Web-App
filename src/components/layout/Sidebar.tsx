@@ -101,7 +101,6 @@ export const Sidebar: React.FC = () => {
       ? []
       : [
           { id: 'profile', label: 'Shop & Location Profile', icon: Store },
-          { id: 'backup', label: 'Cloud Backup & Sync', icon: Cloud },
           { id: 'referrals', label: 'Refer & Earn', icon: Gift },
           { id: 'suggestions', label: 'Support & Help Desk', icon: Headphones },
         ];

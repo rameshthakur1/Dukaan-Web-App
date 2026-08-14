@@ -509,18 +509,19 @@ export const AdminPanel: React.FC = () => {
     );
   }
 
-  // Macro Metrics Calculations
-  const totalUsers = registeredUsers.length;
-  const pendingUsers = registeredUsers.filter((u) => u.status === 'PENDING_APPROVAL').length;
-  const activeTrials = registeredUsers.filter((u) => u.status === 'TRIAL_ACTIVE' && !isAccountTrialExpired(u)).length;
-  const approvedUsers = registeredUsers.filter((u) => u.status === 'APPROVED').length;
-  const expiredUsers = registeredUsers.filter((u) => u.status === 'EXPIRED' || isAccountTrialExpired(u)).length;
+  // Macro Metrics Calculations (Excluding Super Admin HQ account)
+  const storeUsers = registeredUsers.filter((u) => u.role !== 'SUPER_ADMIN');
+  const totalUsers = storeUsers.length;
+  const pendingUsers = storeUsers.filter((u) => u.status === 'PENDING_APPROVAL').length;
+  const activeTrials = storeUsers.filter((u) => u.status === 'TRIAL_ACTIVE' && !isAccountTrialExpired(u)).length;
+  const approvedUsers = storeUsers.filter((u) => u.status === 'APPROVED').length;
+  const expiredUsers = storeUsers.filter((u) => u.status === 'EXPIRED' || isAccountTrialExpired(u)).length;
 
   // Revenue Projections
-  const monthlyCount = registeredUsers.filter((u) => u.subscriptionPlan === 'MONTHLY' && u.status === 'APPROVED').length;
-  const quarterlyCount = registeredUsers.filter((u) => u.subscriptionPlan === 'QUARTERLY' && u.status === 'APPROVED').length;
-  const halfYearlyCount = registeredUsers.filter((u) => u.subscriptionPlan === 'HALF_YEARLY' && u.status === 'APPROVED').length;
-  const yearlyCount = registeredUsers.filter((u) => u.subscriptionPlan === 'YEARLY' && u.status === 'APPROVED').length;
+  const monthlyCount = storeUsers.filter((u) => u.subscriptionPlan === 'MONTHLY' && u.status === 'APPROVED').length;
+  const quarterlyCount = storeUsers.filter((u) => u.subscriptionPlan === 'QUARTERLY' && u.status === 'APPROVED').length;
+  const halfYearlyCount = storeUsers.filter((u) => u.subscriptionPlan === 'HALF_YEARLY' && u.status === 'APPROVED').length;
+  const yearlyCount = storeUsers.filter((u) => u.subscriptionPlan === 'YEARLY' && u.status === 'APPROVED').length;
   const projectedARR = (monthlyCount * planPrices.monthlyNpr * 12) +
                        (quarterlyCount * (planPrices.quarterlyNpr ?? 4000) * 4) +
                        (halfYearlyCount * (planPrices.halfYearlyNpr ?? 7500) * 2) +
@@ -1006,16 +1007,16 @@ export const AdminPanel: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Dates & Expiry */}
-                        <div className="flex items-center gap-6 text-xs text-slate-400 shrink-0 font-mono">
-                          <div>
-                            <span className="block text-[10px] text-slate-500 uppercase font-semibold">Registered</span>
-                            <span className="text-slate-200">{user.registeredAt}</span>
+                        {/* Dates & Expiry in 2 Lines */}
+                        <div className="flex flex-col justify-center gap-1 text-xs text-slate-400 shrink-0 font-mono bg-slate-950/60 border border-slate-800/80 rounded-xl px-3.5 py-2 min-w-[180px]">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-slate-500 uppercase font-semibold tracking-wider">Registered:</span>
+                            <span className="text-slate-200 font-medium">{user.registeredAt}</span>
                           </div>
 
-                          <div>
-                            <span className="block text-[10px] text-slate-500 uppercase font-semibold">
-                              {user.status === 'APPROVED' ? 'Approved Until' : 'Trial Expiry'}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-slate-500 uppercase font-semibold tracking-wider">
+                              {user.status === 'APPROVED' ? 'Approved Until:' : 'Trial Expiry:'}
                             </span>
                             <span className={`font-bold ${isExpired ? 'text-red-400' : 'text-emerald-400'}`}>
                               {user.approvedUntilDate || user.trialExpiryDate || 'Unlimited'}
@@ -1023,33 +1024,34 @@ export const AdminPanel: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Action Buttons */}
+                        {/* Action Buttons in 2 Lines (3 / 3 Options Grid) */}
                         {!isSuper && (
-                          <div className="flex items-center gap-2 flex-wrap shrink-0">
-                            {/* "View As Store" (Shop Impersonation) */}
+                          <div className="grid grid-cols-3 gap-1.5 shrink-0 w-full sm:w-[410px]">
+                            {/* Row 1 - Option 1: View As Store */}
                             <button
                               type="button"
                               onClick={() => startImpersonatingStore(user)}
-                              className="px-3 py-1.5 rounded-xl bg-purple-600/20 text-purple-300 hover:bg-purple-600 hover:text-white border border-purple-500/30 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 shadow-md"
+                              className="px-2.5 py-1.5 rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600 hover:text-white border border-purple-500/30 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95 shadow-sm whitespace-nowrap cursor-pointer"
                               title="Safely enter and view store dashboard"
                               id={`view-as-store-btn-${user.id}`}
                             >
-                              <Eye className="h-3.5 w-3.5" />
+                              <Eye className="h-3.5 w-3.5 shrink-0" />
                               <span>View As Store</span>
                             </button>
 
-                            {/* Activate / Renew */}
+                            {/* Row 1 - Option 2: Activate / Renew */}
                             <button
                               type="button"
                               onClick={() => handleOpenApproveModal(user)}
-                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/20 transition active:scale-95 cursor-pointer"
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1 shadow-md shadow-emerald-600/20 transition active:scale-95 whitespace-nowrap cursor-pointer"
+                              title="Activate or Renew Store Subscription"
                               id={`approve-user-btn-${user.id}`}
                             >
-                              <Check className="h-3.5 w-3.5" />
+                              <Check className="h-3.5 w-3.5 shrink-0" />
                               <span>Activate / Renew</span>
                             </button>
 
-                            {/* Change Password */}
+                            {/* Row 1 - Option 3: Change Password */}
                             <button
                               type="button"
                               onClick={() => {
@@ -1058,15 +1060,15 @@ export const AdminPanel: React.FC = () => {
                                 setConfirmPasswordInput(user.password || '');
                                 setPassNotice(null);
                               }}
-                              className="px-3 py-1.5 rounded-xl bg-amber-950/80 hover:bg-amber-900 border border-amber-800 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                              className="px-2.5 py-1.5 rounded-lg bg-amber-950/80 hover:bg-amber-900 border border-amber-800 text-amber-300 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95 whitespace-nowrap cursor-pointer"
                               title="Change Account Password"
                               id={`change-pass-btn-${user.id}`}
                             >
-                              <KeyRound className="h-3.5 w-3.5 text-amber-400" />
+                              <KeyRound className="h-3.5 w-3.5 text-amber-400 shrink-0" />
                               <span>Password</span>
                             </button>
 
-                            {/* +7 Days Trial Extension */}
+                            {/* Row 2 - Option 1: +7d Trial Extension */}
                             <button
                               type="button"
                               onClick={() =>
@@ -1077,16 +1079,16 @@ export const AdminPanel: React.FC = () => {
                                   onConfirm: () => extendUserTrial(user.id, 7),
                                 })
                               }
-                              className="px-3 py-1.5 rounded-xl bg-blue-950 hover:bg-blue-900 border border-blue-700/80 text-blue-300 font-bold text-xs flex items-center gap-1.5 transition active:scale-95"
+                              className="px-2.5 py-1.5 rounded-lg bg-blue-950 hover:bg-blue-900 border border-blue-700/80 text-blue-300 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95 whitespace-nowrap cursor-pointer"
                               title="Extend Trial by +7 Days"
                               id={`extend-trial-btn-${user.id}`}
                             >
-                              <RefreshCw className="h-3.5 w-3.5 text-blue-400" />
+                              <RefreshCw className="h-3.5 w-3.5 text-blue-400 shrink-0" />
                               <span>+7d Trial</span>
                             </button>
 
-                            {/* Expire Access */}
-                            {user.status !== 'EXPIRED' && (
+                            {/* Row 2 - Option 2: Expire Access */}
+                            {user.status !== 'EXPIRED' ? (
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1097,30 +1099,39 @@ export const AdminPanel: React.FC = () => {
                                     onConfirm: () => rejectOrExpireUser(user.id),
                                   })
                                 }
-                                className="px-3 py-1.5 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-300 font-bold text-xs flex items-center gap-1.5 transition active:scale-95"
+                                className="px-2.5 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-300 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95 whitespace-nowrap cursor-pointer"
                                 title="Expire Account Access"
                               >
-                                <UserX className="h-3.5 w-3.5 text-red-400" />
+                                <UserX className="h-3.5 w-3.5 text-red-400 shrink-0" />
                                 <span>Expire</span>
                               </button>
+                            ) : (
+                              <div
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-slate-500 font-bold text-xs flex items-center justify-center gap-1 opacity-70 cursor-not-allowed select-none whitespace-nowrap"
+                                title="Account is already expired"
+                              >
+                                <UserX className="h-3.5 w-3.5 text-slate-600 shrink-0" />
+                                <span>Expired</span>
+                              </div>
                             )}
 
-                            {/* Delete Requested Account */}
+                            {/* Row 2 - Option 3: Delete Store Account */}
                             <button
                               type="button"
                               onClick={() =>
                                 confirmAction({
                                   title: 'Confirm Permanent Store Deletion',
-                                  message: `Are you sure you want to permanently delete store "${user.shopName}" (@${user.username})? All associated records will be removed.`,
+                                  message: `Are you sure you want to permanently delete store "${user.shopName}" (@${user.username})? All associated records will be removed and login access will be blocked.`,
                                   actionType: 'DELETE',
                                   onConfirm: () => deleteUserAccount(user.id),
                                 })
                               }
-                              className="p-1.5 rounded-xl bg-slate-950 text-slate-400 hover:text-red-400 hover:bg-slate-800 transition"
-                              title="Delete Requested Account"
+                              className="px-2.5 py-1.5 rounded-lg bg-red-950 hover:bg-red-900 border border-red-700/80 text-red-300 font-bold text-xs flex items-center justify-center gap-1 transition active:scale-95 whitespace-nowrap cursor-pointer"
+                              title="Delete Store Account Permanently"
                               id={`delete-user-btn-${user.id}`}
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                              <span>Delete Store</span>
                             </button>
                           </div>
                         )}

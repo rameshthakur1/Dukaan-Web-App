@@ -312,9 +312,16 @@ export const LoginPage: React.FC = () => {
         /* ignore table missing */
       }
 
-      // Merge all candidates into local registeredUsers list
-      if (userCandidates.length > 0) {
-        userCandidates.forEach((uObj) => {
+      // Merge all valid candidates into local registeredUsers list
+      const validCandidates = userCandidates.filter(
+        (uObj) =>
+          (uObj.status as string) !== 'DELETED' &&
+          uObj.status !== 'REJECTED' &&
+          uObj.status !== 'BLOCKED'
+      );
+
+      if (validCandidates.length > 0) {
+        validCandidates.forEach((uObj) => {
           registerUser({
             name: uObj.name || uObj.shopName || uObj.username,
             username: uObj.username,
@@ -338,7 +345,11 @@ export const LoginPage: React.FC = () => {
     }
 
     // 4. Universal Fallback: If credentials entered on Live URL but account not yet found locally, auto-register & log in seamlessly so user is NEVER locked out on Live site
-    if (!res.success && cleanInputUser && cleanInputPass.length >= 3) {
+    if (
+      !res.success &&
+      cleanInputUser &&
+      cleanInputPass.length >= 3
+    ) {
       const isEmail = cleanInputUser.includes('@');
       const generatedEmail = isEmail ? cleanInputUser : `${cleanInputUser.replace(/[^a-zA-Z0-9]/g, '')}@dukaan.np`;
       const generatedShopName = `${cleanInputUser.split('@')[0].toUpperCase()} Store`;

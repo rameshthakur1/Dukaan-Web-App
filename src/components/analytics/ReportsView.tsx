@@ -31,6 +31,11 @@ import {
   ChevronRight,
   ShoppingCart,
   PhoneCall,
+  ChevronDown,
+  FileSpreadsheet,
+  CalendarDays,
+  Check,
+  Sparkles,
 } from 'lucide-react';
 import { ReportPdfModal } from './ReportPdfModal';
 import { AddSalesReturnModal } from './AddSalesReturnModal';
@@ -249,6 +254,85 @@ export const ReportsView: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  // Copy Data to Clipboard Handler
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
+  const handleCopyToClipboard = () => {
+    let textContent = '';
+    const reportName = ALL_REPORTS.find((r) => r.id === activeReportId)?.name || 'Report';
+
+    if (activeReportId === 'SALES_SUMMARY' || activeReportId === 'PARTY_SALES') {
+      const headers = ['Invoice No', 'Date', 'Customer', 'Subtotal', 'Discount', 'VAT', 'Net Total'];
+      const rows = filteredInvoices.map((inv) => [
+        inv.invoiceNo,
+        new Date(inv.createdAt).toLocaleDateString(),
+        inv.customerName,
+        inv.subtotal,
+        inv.discount,
+        inv.taxAmount,
+        inv.netAmount,
+      ]);
+      textContent = [headers.join('\t'), ...rows.map((r) => r.join('\t'))].join('\n');
+    } else if (activeReportId === 'STOCK_SUMMARY' || activeReportId === 'STOCK_VALUATION') {
+      const headers = ['Product Name', 'SKU', 'Category', 'Stock Qty', 'Cost Price', 'Selling Price', 'Cost Valuation'];
+      const rows = products.map((p) => [
+        p.name,
+        p.sku,
+        p.category,
+        p.stockQty,
+        p.unit.primaryCostPrice,
+        p.unit.primarySellingPrice,
+        p.stockQty * p.unit.primaryCostPrice,
+      ]);
+      textContent = [headers.join('\t'), ...rows.map((r) => r.join('\t'))].join('\n');
+    } else if (activeReportId === 'CUSTOMER_RECEIVABLES') {
+      const headers = ['Customer Name', 'Phone', 'Credit Balance (Udharo)', 'Credit Limit', 'Due Date'];
+      const rows = customers.filter((c) => c.currentBalance > 0).map((c) => [
+        c.name,
+        c.phone,
+        c.currentBalance,
+        c.creditLimit,
+        c.dueDate || 'N/A',
+      ]);
+      textContent = [headers.join('\t'), ...rows.map((r) => r.join('\t'))].join('\n');
+    } else {
+      const headers = ['Ref ID', 'Date', 'Description', 'Amount'];
+      const rows = filteredInvoices.map((inv) => [inv.invoiceNo, inv.createdAt.split('T')[0], inv.customerName, inv.netAmount]);
+      textContent = [headers.join('\t'), ...rows.map((r) => r.join('\t'))].join('\n');
+    }
+
+    navigator.clipboard.writeText(`${reportName}\n${textContent}`).then(() => {
+      setCopyFeedback('Report data copied to clipboard!');
+      setTimeout(() => setCopyFeedback(null), 3000);
+    });
+  };
+
+  // JSON Export Handler
+  const handleExportJSON = () => {
+    const reportName = ALL_REPORTS.find((r) => r.id === activeReportId)?.name || 'Report';
+    const payload = {
+      reportId: activeReportId,
+      reportName,
+      generatedAt: new Date().toISOString(),
+      dateRange: dateRangeFilter,
+      shop: shopProfile.shopName,
+      invoices: filteredInvoices,
+      purchases: filteredPurchases,
+      expenses: filteredExpenses,
+      products: products,
+      customers: customers,
+      suppliers: suppliers,
+    };
+
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(payload, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    downloadAnchor.setAttribute('download', `${reportName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
   // WhatsApp Payment Reminder Helper
   const sendWhatsAppReminder = (customerName: string, phone: string, amount: number) => {
     const formattedPhone = phone.replace(/[^0-9]/g, '');
@@ -260,169 +344,253 @@ export const ReportsView: React.FC = () => {
   };
 
   // Category Selector Tabs
-  const categories: { key: ReportCategory; label: string; count: number }[] = [
-    { key: 'SALES', label: '1. Sales Reports', count: 4 },
-    { key: 'PURCHASE', label: '2. Purchase Reports', count: 4 },
-    { key: 'INVENTORY', label: '3. Inventory & Stock', count: 4 },
-    { key: 'PARTY', label: '4. Receivables & Payables', count: 3 },
-    { key: 'FINANCIAL', label: '5. Financial & Operations', count: 5 },
+  const categories: { key: ReportCategory; label: string; count: number; icon: React.ElementType }[] = [
+    { key: 'SALES', label: '1. Sales Reports', count: 4, icon: TrendingUp },
+    { key: 'PURCHASE', label: '2. Purchase Reports', count: 4, icon: ShoppingCart },
+    { key: 'INVENTORY', label: '3. Inventory & Stock', count: 4, icon: Package },
+    { key: 'PARTY', label: '4. Receivables & Payables', count: 3, icon: Users },
+    { key: 'FINANCIAL', label: '5. Financial & Operations', count: 5, icon: BarChart3 },
   ];
 
   const categoryReports = ALL_REPORTS.filter((r) => r.category === activeCategory);
+  const currentReportObj = ALL_REPORTS.find((r) => r.id === activeReportId) || ALL_REPORTS[0];
+  const CurrentReportIcon = currentReportObj.icon;
+
+  const handleCategoryChange = (newCategory: ReportCategory) => {
+    setActiveCategory(newCategory);
+    const firstRep = ALL_REPORTS.find((r) => r.category === newCategory);
+    if (firstRep) {
+      setActiveReportId(firstRep.id);
+    }
+  };
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6 bg-slate-50 dark:bg-slate-950 min-h-[calc(100vh-4rem)]">
-      {/* Top Header & Date Range Station */}
-      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-xs">
-                <BarChart3 className="h-5 w-5" />
+    <div className="flex flex-col gap-5 p-3 sm:p-4 lg:p-6 bg-slate-50 dark:bg-slate-950 min-h-[calc(100vh-4rem)]">
+      {/* ========================================================================= */}
+      {/* MODERN REDESIGNED HEADER CONTROL CENTER */}
+      {/* ========================================================================= */}
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-xs dark:border-slate-800 dark:bg-slate-900 transition-all">
+        {/* Title & Stats Summary Row */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-indigo-700 text-white shadow-sm ring-4 ring-indigo-50 dark:ring-indigo-950/50">
+              <BarChart3 className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-lg sm:text-xl font-black tracking-tight text-slate-900 dark:text-white">
+                  Reports & Financial Analytics
+                </h1>
+                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-bold text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/60">
+                  <Sparkles className="h-3 w-3" />
+                  20 Total Reports
+                </span>
               </div>
-              <div>
-                <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>Reports & Financial Analytics</span>
-                  <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-                    20 Active Reports
-                  </span>
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Comprehensive sales, procurement, inventory audit, party ledgers & P&L statements
-                </p>
-              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Comprehensive sales, procurement, inventory audit, party ledgers & P&L statements
+              </p>
             </div>
           </div>
 
-          {/* Controls: Date Filter, PDF Export, CSV Export */}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
-              {(['ALL', 'DAILY', 'WEEKLY', 'MONTHLY', 'CUSTOM'] as const).map((range) => (
-                <button
-                  key={range}
-                  onClick={() => setDateRangeFilter(range)}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-bold transition cursor-pointer ${
-                    dateRangeFilter === range
-                      ? 'bg-indigo-600 text-white shadow-2xs dark:bg-indigo-500'
-                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
-                  }`}
-                >
-                  {range}
-                </button>
-              ))}
-            </div>
+          {/* Quick Active Badge on Desktop */}
+          <div className="hidden md:flex items-center gap-2 bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className="text-slate-400 dark:text-slate-500">Active:</span>
+            <span className="font-bold text-slate-800 dark:text-white truncate max-w-[200px]">
+              {currentReportObj.name}
+            </span>
+          </div>
+        </div>
 
-            {dateRangeFilter === 'CUSTOM' && (
-              <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2.5 py-1 rounded-xl text-xs">
-                <span className="text-slate-500 font-bold">From:</span>
+        {/* ===================================================================== */}
+        {/* TOP COMPACT DROPDOWNS BAR (Mobile Responsive Grid) */}
+        {/* ===================================================================== */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* 1. CHOOSE REPORT GROUP / HEADER REPORT DROPDOWN */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <Layers className="h-3.5 w-3.5 text-indigo-500" />
+              <span>1. Choose Report</span>
+            </label>
+            <div className="relative">
+              <select
+                value={activeCategory}
+                onChange={(e) => handleCategoryChange(e.target.value as ReportCategory)}
+                className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5 pr-8 text-xs font-bold text-slate-800 shadow-2xs outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-900 cursor-pointer"
+              >
+                {categories.map((cat) => (
+                  <option key={cat.key} value={cat.key} className="py-1">
+                    {cat.label} ({cat.count} reports)
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            </div>
+          </div>
+
+          {/* 2. CHOOSE SUB-REPORT DROPDOWN (Filters by Selected Header Report) */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <FileText className="h-3.5 w-3.5 text-indigo-500" />
+              <span>2. Sub-Report</span>
+            </label>
+            <div className="relative">
+              <select
+                value={activeReportId}
+                onChange={(e) => setActiveReportId(e.target.value as ReportId)}
+                className="w-full appearance-none rounded-xl border border-indigo-200/90 bg-indigo-50/30 px-3 py-2.5 pr-8 text-xs font-bold text-indigo-900 shadow-2xs outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-200 dark:focus:bg-slate-900 cursor-pointer"
+              >
+                {categoryReports.map((rep) => (
+                  <option key={rep.id} value={rep.id} className="py-1">
+                    {rep.name}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-indigo-500" />
+            </div>
+          </div>
+
+          {/* 3. SELECT DATE DROPDOWN */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <CalendarDays className="h-3.5 w-3.5 text-indigo-500" />
+              <span>3. Select Date</span>
+            </label>
+            <div className="relative">
+              <select
+                value={dateRangeFilter}
+                onChange={(e) => setDateRangeFilter(e.target.value as any)}
+                className="w-full appearance-none rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2.5 pr-8 text-xs font-bold text-slate-800 shadow-2xs outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:bg-slate-900 cursor-pointer"
+              >
+                <option value="ALL">📅 All Time Records</option>
+                <option value="DAILY">📅 Today (Daily)</option>
+                <option value="WEEKLY">📅 This Week (Weekly)</option>
+                <option value="MONTHLY">📅 This Month (Monthly)</option>
+                <option value="CUSTOM">📅 Custom Date Range...</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            </div>
+          </div>
+
+          {/* 4. EXPORT TO DROPDOWN (5 Export Options) */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              <Download className="h-3.5 w-3.5 text-indigo-500" />
+              <span>4. Export To</span>
+            </label>
+            <div className="relative">
+              <select
+                value=""
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'PDF') {
+                    setIsPdfModalOpen(true);
+                  } else if (val === 'CSV') {
+                    handleExportCSV();
+                  } else if (val === 'PRINT') {
+                    setIsPdfModalOpen(true);
+                  } else if (val === 'COPY') {
+                    handleCopyToClipboard();
+                  } else if (val === 'JSON') {
+                    handleExportJSON();
+                  }
+                }}
+                className="w-full appearance-none rounded-xl border border-blue-200/90 bg-blue-50/40 px-3 py-2.5 pr-8 text-xs font-bold text-blue-900 shadow-2xs outline-none transition focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/20 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200 dark:focus:bg-slate-900 cursor-pointer"
+              >
+                <option value="" disabled>
+                  📥 Select Export Format (5 Options)...
+                </option>
+                <option value="PDF">📄 1. Export PDF Statement</option>
+                <option value="CSV">📊 2. Export CSV Spreadsheet</option>
+                <option value="PRINT">🖨️ 3. Direct Print Report</option>
+                <option value="COPY">📋 4. Copy Data to Clipboard</option>
+                <option value="JSON">💾 5. Export JSON Data File</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-blue-500" />
+            </div>
+          </div>
+        </div>
+
+        {/* Copy Feedback Notification Banner */}
+        {copyFeedback && (
+          <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 transition-all">
+            <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            <span>{copyFeedback}</span>
+          </div>
+        )}
+
+        {/* CUSTOM DATE RANGE PICKER (Expands seamlessly when CUSTOM is selected) */}
+        {dateRangeFilter === 'CUSTOM' && (
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3 text-xs dark:border-indigo-900/50 dark:bg-indigo-950/30">
+            <span className="font-bold text-indigo-900 dark:text-indigo-200 shrink-0 flex items-center gap-1.5">
+              <Calendar className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+              Filter Custom Dates:
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                <span className="text-[11px] font-bold text-slate-500">From:</span>
                 <input
                   type="date"
                   value={customStartDate}
                   onChange={(e) => setCustomStartDate(e.target.value)}
-                  className="rounded border border-slate-200 bg-white px-1.5 py-0.5 font-bold text-slate-800 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
+                  className="bg-transparent font-bold text-slate-800 dark:text-white outline-none cursor-pointer text-xs"
                 />
-                <span className="text-slate-500 font-bold">To:</span>
+              </div>
+              <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                <span className="text-[11px] font-bold text-slate-500">To:</span>
                 <input
                   type="date"
                   value={customEndDate}
                   onChange={(e) => setCustomEndDate(e.target.value)}
-                  className="rounded border border-slate-200 bg-white px-1.5 py-0.5 font-bold text-slate-800 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
+                  className="bg-transparent font-bold text-slate-800 dark:text-white outline-none cursor-pointer text-xs"
                 />
               </div>
-            )}
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomStartDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+                  setCustomEndDate(new Date().toISOString().split('T')[0]);
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/60 dark:text-indigo-300 text-xs font-bold transition cursor-pointer"
+              >
+                Reset Last 30 Days
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
-            <button
-              onClick={() => setIsPdfModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700 transition shadow-xs"
-              title="Printable Statement PDF"
-            >
-              <Printer className="h-4 w-4" />
-              <span>Export PDF</span>
-            </button>
-
-            <button
-              onClick={handleExportCSV}
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition"
-              title="Export Current Report CSV"
-            >
-              <Download className="h-4 w-4" />
-              <span>Export CSV</span>
-            </button>
+      {/* ========================================================================= */}
+      {/* SEARCH BAR & ACTIVE REPORT BANNER */}
+      {/* ========================================================================= */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/70 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/60">
+            <CurrentReportIcon className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">
+                {currentReportObj.name}
+              </h2>
+              <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                {categories.find((c) => c.key === activeCategory)?.label}
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {currentReportObj.description}
+            </p>
           </div>
         </div>
 
-        {/* 5 Category Navigation Tabs */}
-        <div className="flex items-center gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-800 pb-2 scrollbar-none">
-          {categories.map((cat) => (
-            <button
-              key={cat.key}
-              onClick={() => {
-                setActiveCategory(cat.key);
-                const firstRep = ALL_REPORTS.find((r) => r.category === cat.key);
-                if (firstRep) setActiveReportId(firstRep.id);
-              }}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition whitespace-nowrap cursor-pointer ${
-                activeCategory === cat.key
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-2xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800/80 dark:text-slate-400 dark:hover:bg-slate-800'
-              }`}
-            >
-              <span>{cat.label}</span>
-              <span
-                className={`rounded-full px-2 py-0.5 text-[10px] ${
-                  activeCategory === cat.key
-                    ? 'bg-indigo-500 text-white dark:bg-indigo-600'
-                    : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
-                }`}
-              >
-                {cat.count} Reports
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {/* Specific Report Sub-Pills Bar */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-          {categoryReports.map((report) => {
-            const Icon = report.icon;
-            const isSelected = activeReportId === report.id;
-            return (
-              <button
-                key={report.id}
-                onClick={() => setActiveReportId(report.id)}
-                className={`flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold transition cursor-pointer shrink-0 ${
-                  isSelected
-                    ? 'border-indigo-600 bg-indigo-50/80 text-indigo-700 dark:border-indigo-500 dark:bg-indigo-950/40 dark:text-indigo-300 shadow-2xs'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-700'
-                }`}
-              >
-                <Icon className={`h-4 w-4 ${isSelected ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`} />
-                <span>{report.name}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* SEARCH BAR & ACTIVE REPORT TITLE HEADER */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
-        <div>
-          <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-            <span>{ALL_REPORTS.find((r) => r.id === activeReportId)?.name}</span>
-          </h3>
-          <p className="text-xs text-slate-500">
-            {ALL_REPORTS.find((r) => r.id === activeReportId)?.description}
-          </p>
-        </div>
-
-        <div className="relative w-full sm:w-72">
+        <div className="relative w-full sm:w-72 shrink-0">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <input
             type="text"
             placeholder="Search report records..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-white transition"
           />
         </div>
       </div>

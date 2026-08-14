@@ -42,6 +42,8 @@ export interface Product {
   supplierId?: string;
   supplierName?: string;
   rackNo?: string; // Rack or Shelf Location Number (e.g. Rack A-2)
+  shopCode?: string;
+  shopName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -61,6 +63,8 @@ export interface Customer {
   lastPurchaseDate?: string;
   dueDate?: string; // Payment promise / due date (e.g., '2026-07-28')
   dueNotes?: string;
+  shopCode?: string;
+  shopName?: string;
   createdAt: string;
 }
 
@@ -77,6 +81,8 @@ export interface Supplier {
   advanceBalance?: number; // Advance money paid to supplier
   dueDate?: string; // Vendor payment due date (e.g., '2026-07-30')
   dueNotes?: string;
+  shopCode?: string;
+  shopName?: string;
   createdAt: string;
 }
 
@@ -89,6 +95,8 @@ export interface SupplierAdvancePayment {
   paymentDate: string;
   notes?: string;
   recordedBy?: string;
+  shopCode?: string;
+  shopName?: string;
   createdAt: string;
 }
 
@@ -124,6 +132,8 @@ export interface Invoice {
   netAmount: number;
   splitPayment: SplitPayment;
   paymentStatus: 'PAID' | 'PARTIAL' | 'UNPAID';
+  shopCode?: string;
+  shopName?: string;
   createdAt: string;
   cashierName: string;
 }
@@ -148,6 +158,8 @@ export interface StockPurchase {
   purchaseDate: string;
   notes?: string;
   performedBy?: string;
+  shopCode?: string;
+  shopName?: string;
 }
 
 export interface SalesReturn {
@@ -170,6 +182,8 @@ export interface SalesReturn {
   reason: string;
   returnDate: string;
   performedBy?: string;
+  shopCode?: string;
+  shopName?: string;
 }
 
 export interface PurchaseReturn {
@@ -191,6 +205,8 @@ export interface PurchaseReturn {
   reason: string;
   returnDate: string;
   performedBy?: string;
+  shopCode?: string;
+  shopName?: string;
 }
 
 export interface KhataTransaction {
@@ -206,6 +222,8 @@ export interface KhataTransaction {
   performedBy?: string;
   createdAt: string;
   balanceAfter: number;
+  shopCode?: string;
+  shopName?: string;
 }
 
 export interface NepalAddress {
@@ -384,6 +402,8 @@ export interface Expense {
   notes?: string;
   performedBy?: string;
   expenseDate: string;
+  shopCode?: string;
+  shopName?: string;
   createdAt: string;
 }
 

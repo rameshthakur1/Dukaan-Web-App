@@ -81,7 +81,6 @@ export const MobileNav: React.FC = () => {
       ? []
       : [
           { id: 'profile', label: 'Shop Profile & Address', icon: Store },
-          { id: 'backup', label: 'Cloud Backup & Sync', icon: Cloud },
           { id: 'referrals', label: 'Refer a Friend', icon: Gift },
           { id: 'suggestions', label: 'Support & Help Desk', icon: Headphones },
         ];
