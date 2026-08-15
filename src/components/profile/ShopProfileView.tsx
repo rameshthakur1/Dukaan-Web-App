@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { NEPAL_PROVINCES } from '../../data/initialData';
+import { PasswordStrengthIndicator } from '../common/PasswordStrengthIndicator';
 import {
   Store,
   MapPin,
@@ -718,6 +719,9 @@ export const ShopProfileView: React.FC = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Password Strength Indicator */}
+              <PasswordStrengthIndicator password={newPassword} isDark={false} />
 
               <div className="pt-2 flex items-center justify-end">
                 <button

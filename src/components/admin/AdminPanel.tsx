@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { AuthUser, SubscriptionPlan, AnnouncementTargetType, PlanFeatureConfig } from '../../types';
 import { isAnnouncementTargetedToUser } from '../../utils/announcementUtils';
 import { AdminEarningsDashboard } from './AdminEarningsDashboard';
+import { PasswordStrengthIndicator } from '../common/PasswordStrengthIndicator';
 import {
   ShieldCheck,
   Users,
@@ -3139,7 +3140,7 @@ export const AdminPanel: React.FC = () => {
                     required
                     value={newPasswordInput}
                     onChange={(e) => setNewPasswordInput(e.target.value)}
-                    placeholder="Minimum 4 characters"
+                    placeholder="Minimum 4 characters (8+ recommended)"
                     className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono font-bold text-white outline-none focus:border-amber-500"
                   />
                   <button
@@ -3150,6 +3151,7 @@ export const AdminPanel: React.FC = () => {
                     {showPasswordModalState ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                <PasswordStrengthIndicator password={newPasswordInput} isDark={true} />
               </div>
 
               <div className="space-y-1">

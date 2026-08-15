@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { SubscriptionPlan, AuthUser } from '../../types';
 import { supabase } from '../../lib/supabase';
+import { PasswordStrengthIndicator } from '../common/PasswordStrengthIndicator';
 import {
   Store,
   Lock,
@@ -1800,6 +1801,11 @@ export const LoginPage: React.FC = () => {
                       />
                     </div>
                   </div>
+
+                  {/* Real-time Password Strength Meter with Normal Length (8) standard */}
+                  <div className="sm:col-span-2">
+                    <PasswordStrengthIndicator password={signupPassword} isDark={true} />
+                  </div>
                 </div>
 
                 {/* SUBSCRIPTION MODEL SELECTOR */}
@@ -2223,6 +2229,7 @@ export const LoginPage: React.FC = () => {
                             {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                           </button>
                         </div>
+                        <PasswordStrengthIndicator password={newPassword} isDark={true} />
                       </div>
 
                       <div>

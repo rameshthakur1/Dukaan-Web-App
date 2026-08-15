@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { StaffMember, StaffPayment, PaymentMethod } from '../../types';
+import { PasswordStrengthIndicator } from '../common/PasswordStrengthIndicator';
 import {
   Users,
   UserCheck,
@@ -1203,9 +1204,10 @@ export const StaffManagement: React.FC = () => {
                     type="text"
                     value={staffForm.password}
                     onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })}
-                    placeholder="Enter new password"
+                    placeholder="Enter new password (8+ chars recommended)"
                     className="w-full px-3 py-2 rounded-lg border border-purple-300 dark:border-purple-800 bg-white dark:bg-slate-900 font-mono text-purple-900 dark:text-purple-200 outline-none focus:border-purple-600 text-xs"
                   />
+                  <PasswordStrengthIndicator password={staffForm.password || ''} isDark={false} />
                 </div>
               )}
 
