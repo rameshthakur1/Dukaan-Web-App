@@ -63,6 +63,9 @@ export const Sidebar: React.FC = () => {
   const pendingStaffRequestsCount = staffList.filter((s) => s.accountRequestStatus === 'PENDING').length + registeredUsers.filter((u) => u.staffUserIdAccessStatus === 'PENDING').length;
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const currentShopName = currentUser?.shopName || (shopProfile.shopName && shopProfile.shopName !== 'My Store' && shopProfile.shopName !== 'Dukaan.io Corporate HQ' ? shopProfile.shopName : (isSuperAdmin ? 'Dukaan.io Corporate HQ' : 'My Store'));
+  const currentShopCode = currentUser?.shopCode || (shopProfile.shopCode && shopProfile.shopCode !== 'SHOP-0001' && shopProfile.shopCode !== 'DUKAAN-8821' ? shopProfile.shopCode : (isSuperAdmin ? 'DUKAAN-8821' : 'SHOP-01'));
+  const currentOwnerName = currentUser?.name || shopProfile.ownerName || 'Store Owner';
 
   const storeNavItems: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -117,12 +120,12 @@ export const Sidebar: React.FC = () => {
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-lg shadow-xs">
             D
           </div>
-          <div className="flex flex-col">
+          <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="text-lg font-bold tracking-tight text-white">Dukaan</span>
             </div>
-            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold truncate max-w-[110px]">
-              {shopProfile.shopName}
+            <p className="text-[10px] text-blue-400 uppercase tracking-wider font-bold truncate max-w-[120px]" title={currentShopName}>
+              {currentShopName}
             </p>
           </div>
         </div>
@@ -306,18 +309,21 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Footer Profile & Shop Code & Logout */}
-      <div className="p-3 bg-slate-950/80 border-t border-slate-800 space-y-2">
-        <div className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-900/90 border border-slate-800/80">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-900/60 text-blue-300 font-bold border border-blue-700/40 text-[11px]">
-            {shopProfile.ownerName.slice(0, 2).toUpperCase()}
+      <div className="p-3 bg-slate-950/90 border-t border-slate-800 space-y-2">
+        <div className="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/90 border border-slate-800/80 shadow-xs">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600/20 text-blue-400 font-extrabold border border-blue-500/30 text-xs">
+            {(currentShopName || 'ST').slice(0, 2).toUpperCase()}
           </div>
           <div className="flex min-w-0 flex-1 flex-col">
-            <span className="truncate text-xs font-semibold text-slate-200">
-              {shopProfile.shopName}
+            <span className="truncate text-xs font-bold text-slate-100" title={currentShopName}>
+              {currentShopName}
             </span>
-            <span className="truncate text-[10px] text-slate-400 font-mono">
-              Shop ID: {shopProfile.shopCode}
-            </span>
+            <div className="flex items-center gap-1 mt-0.5">
+              <span className="text-[10px] text-slate-400 font-medium">Code:</span>
+              <span className="truncate text-[10px] text-blue-400 font-mono font-bold">
+                {currentShopCode}
+              </span>
+            </div>
           </div>
           <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" title="Secure Authenticated Session" />
         </div>

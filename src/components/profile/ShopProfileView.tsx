@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { NEPAL_PROVINCES } from '../../data/initialData';
 import {
@@ -40,20 +40,95 @@ export const ShopProfileView: React.FC = () => {
   // Active section tab
   const [activeTab, setActiveTab] = useState<ProfileSectionTab>('GENERAL');
 
-  // General Details State
-  const [shopName, setShopName] = useState(shopProfile.shopName || '');
-  const [ownerName, setOwnerName] = useState(shopProfile.ownerName || '');
-  const [phone, setPhone] = useState(shopProfile.phone || '');
-  const [email, setEmail] = useState(shopProfile.email || '');
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const effectiveShopCode = isSuperAdmin
+    ? (currentUser?.shopCode || shopProfile.shopCode || 'DUKAAN-8821')
+    : (currentUser?.shopCode || (shopProfile.shopCode && shopProfile.shopCode !== 'DUKAAN-8821' && shopProfile.shopCode !== 'SHOP-0001' ? shopProfile.shopCode : 'SHOP-01'));
+  const effectiveShopName = currentUser?.shopName || (shopProfile.shopName && shopProfile.shopName !== 'Dukaan.io Corporate HQ' && shopProfile.shopName !== 'My Store' ? shopProfile.shopName : (isSuperAdmin ? 'Dukaan.io Corporate HQ' : 'My Store'));
+
+  // General Details State (strictly populated with user's own details)
+  const [shopName, setShopName] = useState(() => {
+    if (!isSuperAdmin) {
+      return currentUser?.shopName || (shopProfile.shopName && shopProfile.shopName !== 'Dukaan.io Corporate HQ' && shopProfile.shopName !== 'My Store' ? shopProfile.shopName : '');
+    }
+    return currentUser?.shopName || shopProfile.shopName || 'Dukaan.io Corporate HQ';
+  });
+
+  const [ownerName, setOwnerName] = useState(() => {
+    if (!isSuperAdmin) {
+      return currentUser?.name || (shopProfile.ownerName && !shopProfile.ownerName.includes('Super Admin') && shopProfile.ownerName !== 'Store Owner' ? shopProfile.ownerName : '');
+    }
+    return currentUser?.name || shopProfile.ownerName || 'Super Admin';
+  });
+
+  const [phone, setPhone] = useState(() => {
+    if (!isSuperAdmin) {
+      return currentUser?.phone || (shopProfile.phone && shopProfile.phone !== '9800805092' && shopProfile.phone !== '9801234567' ? shopProfile.phone : '');
+    }
+    return currentUser?.phone || shopProfile.phone || '';
+  });
+
+  const [email, setEmail] = useState(() => {
+    if (!isSuperAdmin) {
+      return currentUser?.email || (shopProfile.email && shopProfile.email !== 'admin@dukan' ? shopProfile.email : '');
+    }
+    return currentUser?.email || shopProfile.email || '';
+  });
+
   const [tagline, setTagline] = useState(shopProfile.tagline || '');
   const [logoUrl, setLogoUrl] = useState(shopProfile.logoUrl || '');
 
-  // Address State
-  const [province, setProvince] = useState(shopProfile.address?.province || 'Bagmati Province');
-  const [district, setDistrict] = useState(shopProfile.address?.district || 'Kathmandu');
+  // Address State (blank for first time until user fills and saves)
+  const [province, setProvince] = useState(shopProfile.address?.province || currentUser?.province || '');
+  const [district, setDistrict] = useState(shopProfile.address?.district || currentUser?.district || '');
   const [municipality, setMunicipality] = useState(shopProfile.address?.municipality || '');
   const [wardNo, setWardNo] = useState(shopProfile.address?.wardNo || '');
   const [tole, setTole] = useState(shopProfile.address?.tole || '');
+
+  // Keep state in sync with shopProfile & currentUser
+  useEffect(() => {
+    if (currentUser) {
+      if (!isSuperAdmin) {
+        if (currentUser.shopName) setShopName(currentUser.shopName);
+        if (currentUser.name) setOwnerName(currentUser.name);
+        if (currentUser.phone) setPhone(currentUser.phone);
+        if (currentUser.email) setEmail(currentUser.email);
+      }
+    }
+  }, [currentUser, isSuperAdmin]);
+
+  useEffect(() => {
+    if (shopProfile) {
+      if (isSuperAdmin) {
+        if (shopProfile.shopName) setShopName(shopProfile.shopName);
+        if (shopProfile.ownerName) setOwnerName(shopProfile.ownerName);
+        if (shopProfile.phone) setPhone(shopProfile.phone);
+        if (shopProfile.email) setEmail(shopProfile.email);
+      } else {
+        if (shopProfile.shopName && shopProfile.shopName !== 'Dukaan.io Corporate HQ' && shopProfile.shopName !== 'My Store') {
+          setShopName(shopProfile.shopName);
+        }
+        if (shopProfile.ownerName && !shopProfile.ownerName.includes('Super Admin') && shopProfile.ownerName !== 'Store Owner') {
+          setOwnerName(shopProfile.ownerName);
+        }
+        if (shopProfile.phone && shopProfile.phone !== '9800805092' && shopProfile.phone !== '9801234567') {
+          setPhone(shopProfile.phone);
+        }
+        if (shopProfile.email && shopProfile.email !== 'admin@dukan') {
+          setEmail(shopProfile.email);
+        }
+      }
+      if (shopProfile.tagline !== undefined) setTagline(shopProfile.tagline);
+      if (shopProfile.logoUrl !== undefined) setLogoUrl(shopProfile.logoUrl);
+      if (shopProfile.address) {
+        setProvince(shopProfile.address.province || currentUser?.province || '');
+        setDistrict(shopProfile.address.district || currentUser?.district || '');
+        setMunicipality(shopProfile.address.municipality || '');
+        setWardNo(shopProfile.address.wardNo || '');
+        setTole(shopProfile.address.tole || '');
+      }
+    }
+  }, [shopProfile, isSuperAdmin, currentUser?.province, currentUser?.district]);
 
   // Thermal printer & VAT State
   const [thermalPrinterType, setThermalPrinterType] = useState(shopProfile.thermalPrinterType || '80mm');
@@ -90,13 +165,20 @@ export const ShopProfileView: React.FC = () => {
     return `DUKAAN-${pCode}-${dCode}-${num}`;
   };
 
-  const currentFullAddress = `${tole ? `${tole}, ` : ''}${wardNo ? `Ward ${wardNo}, ` : ''}${municipality ? `${municipality}, ` : ''}${district ? `${district}, ` : ''}${province}`;
+  const addressParts = [
+    tole.trim(),
+    wardNo.trim() ? `Ward ${wardNo.trim()}` : '',
+    municipality.trim(),
+    district.trim(),
+    province.trim(),
+  ].filter(Boolean);
+  const currentFullAddress = addressParts.join(', ');
 
   const handleSaveGeneral = (e: React.FormEvent) => {
     e.preventDefault();
 
     const fullAddress = currentFullAddress;
-    const autoShopCode = shopProfile.shopCode || generateUniqueShopCode(province, district);
+    const autoShopCode = effectiveShopCode;
 
     updateShopProfile({
       ...shopProfile,
@@ -174,7 +256,7 @@ export const ShopProfileView: React.FC = () => {
 
     confirmAction({
       title: 'Permanently Delete Store Account & Supabase Data?',
-      message: `Are you sure you want to permanently delete your store account (${shopProfile.shopName})? All products, invoices, customer khata balances, supplier ledgers, expenses, and ALL data stored in the Supabase database will be permanently wiped. This action CANNOT be undone.`,
+      message: `Are you sure you want to permanently delete your store account (${effectiveShopName})? All products, invoices, customer khata balances, supplier ledgers, expenses, and ALL data stored in the Supabase database will be permanently wiped. This action CANNOT be undone.`,
       actionType: 'DELETE',
       confirmText: 'Verify Password & Delete Everything',
       cancelText: 'Cancel & Keep Account',
@@ -195,8 +277,8 @@ export const ShopProfileView: React.FC = () => {
   };
 
   const handleCopyCode = () => {
-    if (shopProfile.shopCode) {
-      navigator.clipboard.writeText(shopProfile.shopCode);
+    if (effectiveShopCode) {
+      navigator.clipboard.writeText(effectiveShopCode);
       setCopiedCodeNotice(true);
       setTimeout(() => setCopiedCodeNotice(false), 2000);
     }
@@ -214,7 +296,7 @@ export const ShopProfileView: React.FC = () => {
             <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
               <span>Shop Profile & Settings</span>
               <span className="text-[11px] font-mono font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded-md border border-indigo-200 dark:border-indigo-800">
-                {shopProfile.shopCode || 'NEPAL STORE'}
+                {effectiveShopCode}
               </span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -398,12 +480,18 @@ export const ShopProfileView: React.FC = () => {
                     <select
                       value={province}
                       onChange={(e) => {
-                        setProvince(e.target.value);
-                        const pObj = NEPAL_PROVINCES.find((p) => p.name === e.target.value);
-                        if (pObj && pObj.districts.length > 0) setDistrict(pObj.districts[0]);
+                        const newProv = e.target.value;
+                        setProvince(newProv);
+                        const pObj = NEPAL_PROVINCES.find((p) => p.name === newProv);
+                        if (pObj && pObj.districts.length > 0) {
+                          setDistrict(pObj.districts[0]);
+                        } else {
+                          setDistrict('');
+                        }
                       }}
                       className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
+                      <option value="">-- Select Province --</option>
                       {NEPAL_PROVINCES.map((p) => (
                         <option key={p.name} value={p.name}>
                           {p.name}
@@ -421,6 +509,7 @@ export const ShopProfileView: React.FC = () => {
                       onChange={(e) => setDistrict(e.target.value)}
                       className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-bold text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     >
+                      <option value="">-- Select District --</option>
                       {availableDistricts.map((d) => (
                         <option key={d} value={d}>
                           {d}
@@ -435,7 +524,6 @@ export const ShopProfileView: React.FC = () => {
                     </label>
                     <input
                       type="text"
-                      required
                       value={municipality}
                       onChange={(e) => setMunicipality(e.target.value)}
                       placeholder="e.g. Pokhara Metropolitan City"
@@ -450,7 +538,6 @@ export const ShopProfileView: React.FC = () => {
                       </label>
                       <input
                         type="text"
-                        required
                         value={wardNo}
                         onChange={(e) => setWardNo(e.target.value)}
                         placeholder="e.g. 8"
@@ -464,7 +551,6 @@ export const ShopProfileView: React.FC = () => {
                       </label>
                       <input
                         type="text"
-                        required
                         value={tole}
                         onChange={(e) => setTole(e.target.value)}
                         placeholder="e.g. Srijana Chowk"
@@ -504,7 +590,7 @@ export const ShopProfileView: React.FC = () => {
                   </button>
                 </div>
                 <div className="font-mono text-base font-black text-indigo-900 dark:text-indigo-100 bg-white dark:bg-slate-900 p-3 rounded-xl border border-indigo-200 dark:border-indigo-800 text-center select-all">
-                  {shopProfile.shopCode || 'DUKAAN-BAG-KAT-1024'}
+                  {effectiveShopCode}
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   System-assigned shop identifier for cloud synchronization and multi-terminal syncing.
@@ -670,7 +756,7 @@ export const ShopProfileView: React.FC = () => {
               <span className="font-bold block text-sm">Warning: This action cannot be reversed!</span>
               <p>
                 Deleting your account will immediately remove store profile{' '}
-                <strong className="underline">{shopProfile.shopName}</strong>, erase all product inventory items,
+                <strong className="underline">{effectiveShopName}</strong>, erase all product inventory items,
                 sales invoices, customer khata registers, supplier payment history, expense logs, and login credentials.
               </p>
               <p className="font-semibold text-rose-700 dark:text-rose-300">
@@ -732,7 +818,7 @@ export const ShopProfileView: React.FC = () => {
 
               <div className="pt-2 flex items-center justify-between gap-4">
                 <span className="text-xs text-slate-500">
-                  Store Code: <code className="font-mono font-bold text-slate-700 dark:text-slate-300">{shopProfile.shopCode}</code>
+                  Store Code: <code className="font-mono font-bold text-slate-700 dark:text-slate-300">{effectiveShopCode}</code>
                 </span>
 
                 <button
@@ -741,10 +827,17 @@ export const ShopProfileView: React.FC = () => {
                   className="px-5 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs flex items-center gap-2 shadow-sm transition active:scale-95 cursor-pointer"
                   id="delete-account-btn"
                 >
-                  <Trash2 className="h-4 w-4" />
-                  <span>
-                    {isDeletingAccount ? 'Deleting Account & Supabase Data...' : 'Verify Password & Delete Account'}
-                  </span>
+                  {isDeletingAccount ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      <span>Verify Password & Delete Account</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>

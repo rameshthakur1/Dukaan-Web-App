@@ -22,6 +22,8 @@ import { CloudBackupModal } from './components/more/CloudBackupModal';
 import { ShopExpensesManagement } from './components/analytics/ShopExpensesManagement';
 import { LoginPage } from './components/auth/LoginPage';
 import { AdminPanel } from './components/admin/AdminPanel';
+import { AppLoadingProgress } from './components/common/AppLoadingProgress';
+import { DeletingAccountOverlay } from './components/common/DeletingAccountOverlay';
 import { Clock, AlertTriangle, ShieldCheck, Phone, Mail, LogOut, Zap } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -29,15 +31,42 @@ const AppContent: React.FC = () => {
     activeTab,
     isAuthenticated,
     currentUser,
+    shopProfile,
     isAccountTrialExpired,
     getDaysRemainingInTrial,
     logout,
     setActiveTab,
     adminViewMode,
+    isSessionLoading,
+    setIsSessionLoading,
+    isGlobalDeletingAccount,
+    globalDeletingDetails,
   } = useApp();
+
+  // If currently deleting account, show circular deleting overlay immediately
+  if (isGlobalDeletingAccount) {
+    return (
+      <DeletingAccountOverlay
+        shopName={globalDeletingDetails?.shopName || currentUser?.shopName || shopProfile?.shopName || 'Store Account'}
+        shopCode={globalDeletingDetails?.shopCode || currentUser?.shopCode || shopProfile?.shopCode}
+      />
+    );
+  }
 
   if (!isAuthenticated) {
     return <LoginPage />;
+  }
+
+  // After login until data load, show sliding bar animation from 1 to 100
+  if (isSessionLoading) {
+    return (
+      <AppLoadingProgress
+        shopName={currentUser?.shopName || shopProfile?.shopName || 'My Store'}
+        shopCode={currentUser?.shopCode || shopProfile?.shopCode || 'SHOP-01'}
+        userName={currentUser?.name}
+        onComplete={() => setIsSessionLoading(false)}
+      />
+    );
   }
 
   // Check if trial/subscription is expired

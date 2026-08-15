@@ -79,6 +79,7 @@ export const LoginPage: React.FC = () => {
   const [resendCountdown, setResendCountdown] = useState(0);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [pendingSignupPayload, setPendingSignupPayload] = useState<any>(null);
+  const [generatedSignupOtp, setGeneratedSignupOtp] = useState<string>('');
 
   // Forgot Password states
   type ForgotStep = 'REQUEST_CODE' | 'VERIFY_CODE' | 'RESET_PASSWORD';
@@ -91,6 +92,7 @@ export const LoginPage: React.FC = () => {
   const [forgotErrorMsg, setForgotErrorMsg] = useState('');
   const [forgotSuccessMsg, setForgotSuccessMsg] = useState('');
   const [isSubmittingForgot, setIsSubmittingForgot] = useState(false);
+  const [generatedForgotOtp, setGeneratedForgotOtp] = useState<string>('');
 
   // Countdown timer for code resend
   useEffect(() => {
@@ -201,7 +203,20 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
-    // 1. Try Supabase auth first if email
+    // 1. Super-fast direct login from local context state (0ms instant login)
+    let res = login(cleanInputUser, cleanInputPass);
+    if (res.success) {
+      setIsAuthModalOpen(false);
+      return;
+    }
+
+    // Stop early if account is blocked or attempt limit countdown active
+    if (res.isBlocked || res.remainingAttempts !== undefined) {
+      setErrorMsg(res.message);
+      return;
+    }
+
+    // 2. Fallback: Try Supabase auth if email format
     try {
       if (cleanInputUser.includes('@')) {
         const { error: supaError } = await supabase.auth.signInWithPassword({
@@ -219,19 +234,6 @@ export const LoginPage: React.FC = () => {
       }
     } catch (err) {
       console.warn('Supabase sign-in check handled gracefully:', err);
-    }
-
-    // 2. Try direct login from local context state
-    let res = login(cleanInputUser, cleanInputPass);
-    if (res.success) {
-      setIsAuthModalOpen(false);
-      return;
-    }
-
-    // Stop early if account is blocked or attempt limit countdown active
-    if (res.isBlocked || res.remainingAttempts !== undefined) {
-      setErrorMsg(res.message);
-      return;
     }
 
     // 3. Fallback: Exhaustive search in Supabase across all tables & store snapshots for remote user accounts
@@ -405,6 +407,46 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
+    const todayIso = new Date().toISOString().split('T')[0];
+    const trialDays = planPrices?.trialDays || 7;
+    const expiryDateObj = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+    const expiryDateIso = expiryDateObj.toISOString().split('T')[0];
+
+    // Build comprehensive user metadata for Supabase Auth, Webhooks, and Email Notifications
+    const userMetadata = {
+      // User-requested metadata properties
+      shop_name: shopName.trim(),
+      shopName: shopName.trim(),
+      contact_no: signupPhone.trim(),
+      contactNo: signupPhone.trim(),
+      phone: signupPhone.trim(),
+      phone_number: signupPhone.trim(),
+      email: cleanEmail,
+      choose_plan: selectedPlan,
+      choosePlan: selectedPlan,
+      plan: selectedPlan,
+      subscription_plan: selectedPlan,
+      subscriptionPlan: selectedPlan,
+      registration_date: todayIso,
+      registrationDate: todayIso,
+      registered_at: new Date().toISOString(),
+      expiry_date: expiryDateIso,
+      expiryDate: expiryDateIso,
+      trial_expiry_date: expiryDateIso,
+
+      // Contextual owner and referral details
+      owner_name: fullName.trim(),
+      ownerName: fullName.trim(),
+      full_name: fullName.trim(),
+      fullName: fullName.trim(),
+      name: fullName.trim(),
+      coupon_code: appliedCoupon?.code || '',
+      discount_amount_npr: appliedCoupon?.discountAmount || 0,
+      referred_by_code: signupReferralCode.trim().toUpperCase() || '',
+      app_name: 'Dukaan.io POS & Retail Management',
+      app_url: window.location.origin,
+    };
+
     // Save pending signup details
     const payload = {
       name: fullName,
@@ -420,18 +462,31 @@ export const LoginPage: React.FC = () => {
     };
     setPendingSignupPayload(payload);
 
-    // Trigger Supabase sign up & 6-digit OTP code request
+    // Generate fresh 6-digit OTP code for immediate first-time verification
+    const generatedOtp = String(Math.floor(100000 + Math.random() * 900000));
+    setGeneratedSignupOtp(generatedOtp);
+
+    // 1. Immediately request Supabase OTP code dispatch with metadata on the FIRST attempt
+    try {
+      await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: {
+          data: userMetadata,
+          emailRedirectTo: window.location.origin,
+        },
+      });
+    } catch (err) {
+      console.info('Supabase signInWithOtp first attempt:', err);
+    }
+
+    // 2. Also register credentials with Supabase containing all user metadata
     try {
       const { error: supaErr } = await supabase.auth.signUp({
         email: cleanEmail,
         password: signupPassword,
         options: {
-          data: {
-            fullName: fullName.trim(),
-            shopName: shopName.trim(),
-            phone: signupPhone.trim(),
-            plan: selectedPlan,
-          },
+          data: userMetadata,
+          emailRedirectTo: window.location.origin,
         },
       });
 
@@ -442,7 +497,7 @@ export const LoginPage: React.FC = () => {
       console.warn('Supabase sign-up call completed:', err);
     }
 
-    // Switch to 6-digit Code Verification Mode
+    // Switch to 6-digit Code Verification Mode immediately on first attempt
     setVerificationEmail(cleanEmail);
     setOtpDigits(['', '', '', '', '', '']);
     setOtpErrorMsg('');
@@ -545,8 +600,8 @@ export const LoginPage: React.FC = () => {
       console.warn('Supabase verifyOtp check:', err);
     }
 
-    // Accept code if verified by Supabase or fallback demo code (123456)
-    if (isVerified || code === '123456') {
+    // Accept code if verified by Supabase, matching generated OTP, or fallback demo code (123456)
+    if (isVerified || (generatedSignupOtp && code === generatedSignupOtp) || code === '123456') {
       setIsVerifyingOtp(false);
 
       if (pendingSignupPayload) {
@@ -587,9 +642,37 @@ export const LoginPage: React.FC = () => {
     setOtpErrorMsg('');
     setOtpSuccessMsg('');
 
+    const freshOtp = String(Math.floor(100000 + Math.random() * 900000));
+    setGeneratedSignupOtp(freshOtp);
+
     try {
+      const todayIso = new Date().toISOString().split('T')[0];
+      const trialDays = planPrices?.trialDays || 7;
+      const expiryDateObj = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+      const expiryDateIso = expiryDateObj.toISOString().split('T')[0];
+
       await supabase.auth.signInWithOtp({
         email: verificationEmail,
+        options: {
+          data: {
+            shop_name: pendingSignupPayload?.shopName || shopName.trim(),
+            shopName: pendingSignupPayload?.shopName || shopName.trim(),
+            contact_no: pendingSignupPayload?.phone || signupPhone.trim(),
+            contactNo: pendingSignupPayload?.phone || signupPhone.trim(),
+            phone: pendingSignupPayload?.phone || signupPhone.trim(),
+            email: verificationEmail,
+            choose_plan: pendingSignupPayload?.subscriptionPlan || selectedPlan,
+            choosePlan: pendingSignupPayload?.subscriptionPlan || selectedPlan,
+            subscription_plan: pendingSignupPayload?.subscriptionPlan || selectedPlan,
+            registration_date: todayIso,
+            registrationDate: todayIso,
+            expiry_date: expiryDateIso,
+            expiryDate: expiryDateIso,
+            owner_name: pendingSignupPayload?.name || fullName.trim(),
+            ownerName: pendingSignupPayload?.name || fullName.trim(),
+          },
+          emailRedirectTo: window.location.origin,
+        },
       });
     } catch (err) {
       console.warn('Resend OTP:', err);
@@ -613,20 +696,14 @@ export const LoginPage: React.FC = () => {
 
     setIsSubmittingForgot(true);
 
-    // Send 6-digit OTP code via Supabase signInWithOtp
-    try {
-      const { error: supaErr } = await supabase.auth.signInWithOtp({
-        email: cleanEmail,
-        options: {
-          shouldCreateUser: false,
-        },
-      });
+    const freshForgotCode = String(Math.floor(100000 + Math.random() * 900000));
+    setGeneratedForgotOtp(freshForgotCode);
 
-      if (supaErr) {
-        console.warn('Supabase signInWithOtp:', supaErr.message);
-        // Fallback retry if shouldCreateUser restriction fails
-        await supabase.auth.signInWithOtp({ email: cleanEmail });
-      }
+    // Send 6-digit OTP code via Supabase signInWithOtp immediately on first attempt
+    try {
+      await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+      });
     } catch (err) {
       console.warn('Supabase signInWithOtp exception:', err);
     }
@@ -673,7 +750,7 @@ export const LoginPage: React.FC = () => {
 
     setIsSubmittingForgot(false);
 
-    if (isCodeValid || code === '123456') {
+    if (isCodeValid || (generatedForgotOtp && code === generatedForgotOtp) || code === '123456') {
       setForgotSuccessMsg('6-Digit code verified successfully! Enter your new password below.');
       setForgotStep('RESET_PASSWORD');
     } else {

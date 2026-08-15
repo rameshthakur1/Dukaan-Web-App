@@ -262,6 +262,13 @@ interface AppContextType {
   isAccountTrialExpired: (user?: AuthUser | null) => boolean;
   getDaysRemainingInTrial: (user?: AuthUser | null) => number;
 
+  // Session Progress Loading & Account Deletion Overlay State
+  isSessionLoading: boolean;
+  setIsSessionLoading: (loading: boolean) => void;
+  triggerSessionLoading: () => void;
+  isGlobalDeletingAccount: boolean;
+  globalDeletingDetails: { shopName?: string; shopCode?: string } | null;
+
   referralInfo: ReferralInfo;
   referralRewardRule: ReferralRewardRule;
   updateReferralRewardRule: (rule: ReferralRewardRule) => void;
@@ -633,6 +640,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return stored === 'true';
   });
 
+  // Session progress loader (1 to 100 sliding animation) state
+  const [isSessionLoading, setIsSessionLoading] = useState<boolean>(() => {
+    return localStorage.getItem('dukaan_is_authenticated') === 'true';
+  });
+
+  const triggerSessionLoading = () => {
+    setIsSessionLoading(true);
+  };
+
+  // Global deleting account overlay state
+  const [isGlobalDeletingAccount, setIsGlobalDeletingAccount] = useState<boolean>(false);
+  const [globalDeletingDetails, setGlobalDeletingDetails] = useState<{ shopName?: string; shopCode?: string } | null>(null);
+
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
     const stored = localStorage.getItem('dukaan_is_authenticated');
     if (stored !== 'true') return null;
@@ -646,6 +666,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const activeStoreUser = impersonatedUser || currentUser;
+
+  // Sequential Shop Code generator starting from SHOP-01 (SHOP-01, SHOP-02, SHOP-03...)
+  const generateSequentialShopCode = (existingList: AuthUser[] = []): string => {
+    let maxNum = 0;
+    existingList.forEach((u) => {
+      if (u.shopCode) {
+        const match = u.shopCode.match(/^SHOP[-_]?(\d+)$/i);
+        if (match && match[1]) {
+          const val = parseInt(match[1], 10);
+          if (!isNaN(val) && val < 10000) {
+            if (val > maxNum) maxNum = val;
+          }
+        }
+      }
+    });
+
+    const nextIndex = maxNum + 1;
+    const formatted = nextIndex < 10 ? `0${nextIndex}` : `${nextIndex}`;
+    return `SHOP-${formatted}`;
+  };
 
   const registerUser = (payload: {
     name: string;
@@ -720,7 +760,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const today = getTodayIso();
     const trialEnd = getFutureIso(planPrices.trialDays || 7);
-    const newShopCode = `SHOP-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newShopCode = generateSequentialShopCode(registeredUsers);
 
     // Generate unique 6-character referral code for new user
     let userReferralCode = generateReferralCode();
@@ -806,20 +846,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setRegisteredUsers((prev) => [newUser, ...prev]);
 
-    // Push new user account immediately to Supabase Cloud so it's accessible across Preview & Live URLs
+    // Push new user account immediately to Supabase Cloud with rich metadata for Auth, Webhooks & Notifications
     try {
+      const userMeta = {
+        shop_name: newUser.shopName,
+        shopName: newUser.shopName,
+        contact_no: newUser.phone,
+        contactNo: newUser.phone,
+        phone: newUser.phone,
+        phone_number: newUser.phone,
+        email: newUser.email,
+        choose_plan: newUser.subscriptionPlan,
+        choosePlan: newUser.subscriptionPlan,
+        plan: newUser.subscriptionPlan,
+        subscription_plan: newUser.subscriptionPlan,
+        subscriptionPlan: newUser.subscriptionPlan,
+        registration_date: newUser.registeredAt || today,
+        registrationDate: newUser.registeredAt || today,
+        registered_at: new Date().toISOString(),
+        expiry_date: newUser.trialExpiryDate || trialEnd,
+        expiryDate: newUser.trialExpiryDate || trialEnd,
+        trial_expiry_date: newUser.trialExpiryDate || trialEnd,
+        owner_name: newUser.name,
+        ownerName: newUser.name,
+        full_name: newUser.name,
+        fullName: newUser.name,
+        name: newUser.name,
+        shop_code: newUser.shopCode,
+        shopCode: newUser.shopCode,
+        coupon_code: newUser.appliedCouponCode || '',
+        discount_amount_npr: newUser.discountAmountNpr || 0,
+        referred_by_code: newUser.referredByCode || '',
+      };
+
       const userPayload = {
         id: newUser.id,
         username: newUser.username,
         password: newUser.password,
         email: newUser.email,
         phone: newUser.phone,
+        contact_no: newUser.phone,
         name: newUser.name,
+        owner_name: newUser.name,
         role: newUser.role,
         shop_name: newUser.shopName,
         shop_code: newUser.shopCode,
         status: newUser.status,
+        choose_plan: newUser.subscriptionPlan,
         subscription_plan: newUser.subscriptionPlan,
+        registration_date: newUser.registeredAt || today,
+        expiry_date: newUser.trialExpiryDate || trialEnd,
+        raw_user_meta_data: userMeta,
+        user_metadata: userMeta,
         user_payload: newUser,
         synced_at: new Date().toISOString(),
       };
@@ -828,6 +906,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           supabase.from('app_users').upsert([userPayload], { onConflict: 'id' });
         }
       });
+
+      // Update Supabase Auth user metadata
+      try {
+        supabase.auth.updateUser({
+          data: userMeta,
+        });
+      } catch (authMetaErr) {
+        console.info('Supabase updateUser metadata notice:', authMetaErr);
+      }
     } catch (e) {
       console.warn('Immediate user sync to Supabase:', e);
     }
@@ -835,6 +922,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Auto log in new user with instant trial and direct immediately to Dashboard
     setIsAuthenticated(true);
     setCurrentUser(newUser);
+    setIsSessionLoading(true);
     setActiveTab('dashboard'); // Direct to Dashboard!
     localStorage.setItem('dukaan_is_authenticated', 'true');
     localStorage.setItem('dukaan_current_user_id', newUser.id);
@@ -1042,6 +1130,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'khata_details',
       'products',
       'expenses',
+      'shop_expenses',
       'shop_profiles',
       'store_backups',
       'store_snapshots',
@@ -1052,6 +1141,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     tablesToClean.forEach(async (tbl) => {
       try {
+        if (sCode && shopName) {
+          await supabase.from(tbl).delete().eq('shop_code', sCode).eq('shop_name', shopName);
+        }
+        if (sCode) {
+          await supabase.from(tbl).delete().eq('shop_code', sCode);
+        }
+        if (shopName) {
+          await supabase.from(tbl).delete().eq('shop_name', shopName);
+        }
         if (actualId) {
           await supabase.from(tbl).delete().eq('user_id', actualId);
           await supabase.from(tbl).delete().eq('id', actualId);
@@ -1061,9 +1159,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         if (username) {
           await supabase.from(tbl).delete().eq('username', username);
-        }
-        if (sCode) {
-          await supabase.from(tbl).delete().eq('shop_code', sCode);
         }
       } catch (e) {
         console.warn(e);
@@ -1184,77 +1279,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cleanPass = passwordInput.trim();
     if (!cleanPass || !currentUser) return false;
 
-    // 1. Master / Demo Passwords
+    // 1. Master / Demo Passwords (instant 0ms)
     const isMasterPass = cleanPass === 'demo123' || cleanPass === 'pass123' || cleanPass === 'admin123' || cleanPass === 'admin';
     if (isMasterPass) return true;
 
-    // 2. Local stored password check
+    // 2. Local stored password check (instant 0ms)
     const userInList = registeredUsers.find((u) => u.id === currentUser.id) || currentUser;
     const localPass = (userInList.password || currentUser.password || '').trim();
     if (localPass && localPass === cleanPass) {
       return true;
     }
 
-    // 3. Supabase Auth Verification
+    // 3. Fast Parallel Supabase Verification if local mismatch
     const userEmail = currentUser.email || (currentUser.username && currentUser.username.includes('@') ? currentUser.username : '');
-    if (userEmail) {
-      try {
-        const { data, error: supaAuthErr } = await supabase.auth.signInWithPassword({
-          email: userEmail,
-          password: cleanPass,
+    try {
+      const authPromise = userEmail
+        ? supabase.auth.signInWithPassword({ email: userEmail, password: cleanPass }).then(({ data, error }) => !error && !!data?.user)
+        : Promise.resolve(false);
+
+      const regPromise = supabase
+        .from('registered_users')
+        .select('password, user_payload')
+        .eq('id', currentUser.id)
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            const row = data[0];
+            const p = row.password || (row.user_payload && row.user_payload.password);
+            return p && p.trim() === cleanPass;
+          }
+          return false;
         });
-        if (!supaAuthErr && data?.user) {
-          return true;
-        }
-      } catch (e) {
-        console.warn('Supabase auth password check error:', e);
-      }
-    }
 
-    // 4. Supabase DB registered_users table lookup
-    try {
-      const { data: regRows } = await supabase.from('registered_users').select('*');
-      if (regRows && regRows.length > 0) {
-        for (const r of regRows) {
-          const isMatchUser =
-            r.id === currentUser.id ||
-            (r.email && userEmail && r.email.toLowerCase() === userEmail.toLowerCase()) ||
-            (r.shop_code && currentUser.shopCode && r.shop_code.toLowerCase() === currentUser.shopCode.toLowerCase());
+      const results = await Promise.race([
+        Promise.all([authPromise, regPromise]),
+        new Promise<boolean[]>((resolve) => setTimeout(() => resolve([false, false]), 800)),
+      ]);
 
-          if (isMatchUser) {
-            const rowPass = r.password || (r.user_payload && r.user_payload.password);
-            if (rowPass && rowPass.trim() === cleanPass) {
-              return true;
-            }
-          }
-        }
-      }
+      if (results[0] || results[1]) return true;
     } catch (e) {
-      console.warn('Supabase registered_users password check error:', e);
+      console.warn('Fast password verification error:', e);
     }
 
-    // 5. Supabase DB app_users table lookup
-    try {
-      const { data: appRows } = await supabase.from('app_users').select('*');
-      if (appRows && appRows.length > 0) {
-        for (const r of appRows) {
-          const isMatchUser =
-            r.id === currentUser.id ||
-            (r.email && userEmail && r.email.toLowerCase() === userEmail.toLowerCase());
-
-          if (isMatchUser) {
-            const rowPass = r.password || (r.user_payload && r.user_payload.password);
-            if (rowPass && rowPass.trim() === cleanPass) {
-              return true;
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Supabase app_users password check error:', e);
-    }
-
-    // 6. Fallback: If no password exists in local user record at all, accept the input password
+    // 4. Fallback: If no password exists in local user record at all, accept the input password
     if (!localPass) {
       return true;
     }
@@ -1278,9 +1344,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const uid = currentUser.id;
     const sCode = shopProfile?.shopCode || currentUser.shopCode || '';
+    const sName = shopProfile?.shopName || currentUser.shopName || '';
     const userEmail = currentUser.email || '';
+    const username = currentUser.username || '';
 
-    // Delete all store and user rows from Supabase database
+    // Show circular deleting account overlay immediately
+    setIsGlobalDeletingAccount(true);
+    setGlobalDeletingDetails({
+      shopName: sName || 'Store Account',
+      shopCode: sCode || '',
+    });
+
+    // Fire all Supabase deletions in ultra-fast PARALLEL promises
     const tablesToClean = [
       'invoices',
       'sales',
@@ -1299,6 +1374,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'khata_details',
       'products',
       'expenses',
+      'shop_expenses',
       'shop_profiles',
       'store_backups',
       'store_snapshots',
@@ -1309,50 +1385,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'audit_logs',
     ];
 
-    for (const table of tablesToClean) {
-      try {
-        if (sCode) {
-          await supabase.from(table).delete().eq('shop_code', sCode);
-        }
-        if (uid) {
-          await supabase.from(table).delete().eq('user_id', uid);
-          await supabase.from(table).delete().eq('id', uid);
-        }
-        if (userEmail) {
-          await supabase.from(table).delete().eq('email', userEmail);
-        }
-      } catch (e) {
-        console.warn(`Supabase deletion on table ${table}:`, e);
+    const deletePromises: Promise<any>[] = [];
+
+    // Parallelize table deletions
+    tablesToClean.forEach((table) => {
+      if (sCode && sName) deletePromises.push(Promise.resolve(supabase.from(table).delete().eq('shop_code', sCode).eq('shop_name', sName)));
+      if (sCode) deletePromises.push(Promise.resolve(supabase.from(table).delete().eq('shop_code', sCode)));
+      if (sName) deletePromises.push(Promise.resolve(supabase.from(table).delete().eq('shop_name', sName)));
+      if (uid) {
+        deletePromises.push(Promise.resolve(supabase.from(table).delete().eq('user_id', uid)));
+        deletePromises.push(Promise.resolve(supabase.from(table).delete().eq('id', uid)));
       }
-    }
+      if (userEmail) deletePromises.push(Promise.resolve(supabase.from(table).delete().eq('email', userEmail)));
+      if (username) deletePromises.push(Promise.resolve(supabase.from(table).delete().eq('username', username)));
+    });
 
-    try {
-      await supabase.auth.signOut();
-    } catch (e) {
-      console.error(e);
+    // Snapshots and Auth cleanup
+    if (sCode) {
+      deletePromises.push(Promise.resolve(supabase.from('store_snapshots').delete().eq('id', `snapshot_${sCode}`)));
+      deletePromises.push(Promise.resolve(supabase.from('dukaan_store_snapshots').delete().eq('id', `snapshot_${sCode}`)));
+      deletePromises.push(Promise.resolve(supabase.from('store_snapshots').delete().eq('id', sCode)));
+      deletePromises.push(Promise.resolve(supabase.from('dukaan_store_snapshots').delete().eq('id', sCode)));
     }
+    if (uid) {
+      deletePromises.push(Promise.resolve(supabase.from('store_snapshots').delete().eq('id', uid)));
+      deletePromises.push(Promise.resolve(supabase.from('dukaan_store_snapshots').delete().eq('id', uid)));
+    }
+    deletePromises.push(Promise.resolve(supabase.auth.signOut()));
 
-    // Delete user from local state
+    // Execute network deletions concurrently in background / parallel
+    Promise.allSettled(deletePromises).catch((err) => console.warn('Supabase parallel delete error:', err));
+
+    // Delete user from local state and registry immediately
     deleteUserAccount(uid);
 
-    // Remove local storage items
+    // Remove all local storage items associated with this shop and user
     try {
-      localStorage.removeItem(`dukaan_user_store_v4_${uid}`);
-      localStorage.removeItem(`dukaan_shop_profile_${uid}`);
-      localStorage.removeItem(`dukaan_invoices_${uid}`);
-      localStorage.removeItem(`dukaan_products_${uid}`);
-      localStorage.removeItem(`dukaan_customers_${uid}`);
-      localStorage.removeItem(`dukaan_suppliers_${uid}`);
-      localStorage.removeItem(`dukaan_khata_${uid}`);
-      localStorage.removeItem(`dukaan_expenses_${uid}`);
-      localStorage.removeItem('dukaan_is_authenticated');
-      localStorage.removeItem('dukaan_current_user_id');
-      localStorage.removeItem('dukaan_current_staff');
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k) {
+          if (
+            (uid && k.includes(uid)) ||
+            (sCode && k.toLowerCase().includes(sCode.toLowerCase())) ||
+            (sName && k.toLowerCase().includes(sName.toLowerCase())) ||
+            k.startsWith('dukaan_invoices') ||
+            k.startsWith('dukaan_products') ||
+            k.startsWith('dukaan_customers') ||
+            k.startsWith('dukaan_suppliers') ||
+            k.startsWith('dukaan_khata') ||
+            k.startsWith('dukaan_expenses') ||
+            k.startsWith('dukaan_sales_returns') ||
+            k.startsWith('dukaan_purchase_returns') ||
+            k.startsWith('dukaan_supplier_advances') ||
+            k.startsWith('dukaan_shop_profile') ||
+            k.startsWith('dukaan_store_snapshot') ||
+            k === 'dukaan_is_authenticated' ||
+            k === 'dukaan_current_user_id' ||
+            k === 'dukaan_current_staff'
+          ) {
+            keysToRemove.push(k);
+          }
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
     } catch (e) {
-      console.error(e);
+      console.error('LocalStorage cleanup error:', e);
     }
 
-    // Reset local state memory
+    // Reset local in-memory data
     setInvoices([]);
     setProducts([]);
     setCustomers([]);
@@ -1361,11 +1462,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setExpenses([]);
     setSalesReturns([]);
     setPurchaseReturns([]);
+    setSupplierAdvancePayments([]);
+    setAuditLogs([]);
 
-    // Logout session
+    // Snappy 900ms duration for circular deleting animation
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    // Logout session and redirect directly to landing page
     logout();
+    setIsAuthenticated(false);
+    setCurrentUser(null);
+    setCurrentStaff(null);
+    setIsGlobalDeletingAccount(false);
+    setGlobalDeletingDetails(null);
+    setActiveTab('dashboard');
 
-    return { success: true, message: 'Account and all Supabase database records deleted successfully.' };
+    return { success: true, message: 'Account and all shop data have been permanently deleted from Supabase database.' };
   };
 
   const requestStaffUserIdAccess = () => {
@@ -1664,10 +1776,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setIsAuthenticated(true);
     setCurrentUser(matchedUser);
+    setIsSessionLoading(true);
     setCurrentStaff(null);
     localStorage.setItem('dukaan_is_authenticated', 'true');
     localStorage.setItem('dukaan_current_user_id', matchedUser.id);
     localStorage.removeItem('dukaan_current_staff');
+
+    if (matchedUser.role !== 'SUPER_ADMIN') {
+      setShopProfile((prev) => ({
+        ...prev,
+        shopName: matchedUser.shopName || prev.shopName,
+        ownerName: matchedUser.name || prev.ownerName,
+        email: matchedUser.email || prev.email,
+        phone: matchedUser.phone || prev.phone,
+        shopCode: matchedUser.shopCode || prev.shopCode || 'SHOP-01',
+        address: {
+          province: matchedUser.province || prev.address?.province || '',
+          district: matchedUser.district || prev.address?.district || '',
+          municipality: prev.address?.municipality || '',
+          wardNo: prev.address?.wardNo || '',
+          tole: prev.address?.tole || '',
+          fullAddress: matchedUser.address || prev.address?.fullAddress || '',
+        },
+      }));
+    }
     return { success: true };
   };
 
@@ -3829,13 +3961,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const parsed = JSON.parse(saved);
         if (parsed.shopProfile) {
           const sp = parsed.shopProfile;
+          const isUserAdmin = activeStoreUser.role === 'SUPER_ADMIN';
+
           const cleanProfile: ShopProfile = {
             ...sp,
-            shopName: sp.shopName && sp.shopName !== 'My Store' ? sp.shopName : (activeStoreUser.shopName || sp.shopName),
-            shopCode: sp.shopCode && sp.shopCode !== 'SHOP-0001' ? sp.shopCode : (activeStoreUser.shopCode || sp.shopCode),
-            ownerName: sp.ownerName && sp.ownerName !== 'Store Owner' ? sp.ownerName : activeStoreUser.name,
-            email: sp.email || activeStoreUser.email,
-            phone: sp.phone || activeStoreUser.phone || '',
+            shopName: isUserAdmin
+              ? (sp.shopName || activeStoreUser.shopName || 'Dukaan.io Corporate HQ')
+              : (activeStoreUser.shopName || (sp.shopName && sp.shopName !== 'Dukaan.io Corporate HQ' && sp.shopName !== 'My Store' ? sp.shopName : 'My Store')),
+            shopCode: isUserAdmin
+              ? (sp.shopCode || activeStoreUser.shopCode || 'DUKAAN-8821')
+              : (activeStoreUser.shopCode || (sp.shopCode && sp.shopCode !== 'DUKAAN-8821' && sp.shopCode !== 'SHOP-0001' ? sp.shopCode : 'SHOP-01')),
+            ownerName: isUserAdmin
+              ? (sp.ownerName || activeStoreUser.name || 'Super Admin')
+              : (activeStoreUser.name || (sp.ownerName && !sp.ownerName.includes('Super Admin') && sp.ownerName !== 'Store Owner' ? sp.ownerName : 'Store Owner')),
+            email: isUserAdmin
+              ? (sp.email || activeStoreUser.email)
+              : (activeStoreUser.email || (sp.email && sp.email !== 'admin@dukan' ? sp.email : '')),
+            phone: isUserAdmin
+              ? (sp.phone || activeStoreUser.phone || '')
+              : (activeStoreUser.phone || (sp.phone && sp.phone !== '9800805092' && sp.phone !== '9801234567' ? sp.phone : '')),
+            address: sp.address || {
+              province: activeStoreUser.province || '',
+              district: activeStoreUser.district || '',
+              municipality: '',
+              wardNo: '',
+              tole: '',
+              fullAddress: activeStoreUser.address || '',
+            },
           };
           setShopProfile(cleanProfile);
         } else {
@@ -3845,7 +3997,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ownerName: activeStoreUser.name,
             email: activeStoreUser.email,
             phone: activeStoreUser.phone || '',
-            shopCode: activeStoreUser.shopCode || 'SHOP-0001',
+            shopCode: activeStoreUser.shopCode || (activeStoreUser.role === 'SUPER_ADMIN' ? 'DUKAAN-8821' : 'SHOP-01'),
+            address: {
+              province: activeStoreUser.province || '',
+              district: activeStoreUser.district || '',
+              municipality: '',
+              wardNo: '',
+              tole: '',
+              fullAddress: activeStoreUser.address || '',
+            },
           });
         }
 
@@ -3882,11 +4042,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ownerName: activeStoreUser.name,
           email: activeStoreUser.email,
           phone: activeStoreUser.phone || '',
-          shopCode: activeStoreUser.shopCode || 'SHOP-0001',
+          shopCode: activeStoreUser.shopCode || 'SHOP-01',
           address: {
-            ...INITIAL_SHOP_PROFILE.address,
-            province: activeStoreUser.province || INITIAL_SHOP_PROFILE.address.province,
-            district: activeStoreUser.district || INITIAL_SHOP_PROFILE.address.district,
+            province: activeStoreUser.province || '',
+            district: activeStoreUser.district || '',
+            municipality: '',
+            wardNo: '',
+            tole: '',
             fullAddress: activeStoreUser.address || '',
           },
         };
@@ -5279,6 +5441,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         rejectStaffUserIdAccess,
         isAccountTrialExpired,
         getDaysRemainingInTrial,
+
+        isSessionLoading,
+        setIsSessionLoading,
+        triggerSessionLoading,
+        isGlobalDeletingAccount,
+        globalDeletingDetails,
 
         referralInfo,
         referralRewardRule,

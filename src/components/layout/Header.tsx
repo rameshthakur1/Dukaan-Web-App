@@ -31,6 +31,10 @@ export const Header: React.FC = () => {
 
   const lowStockCount = products.filter((p) => p.stockQty <= p.minStockAlert).length;
   const effectiveUser = impersonatedUser || currentUser;
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const currentShopName = effectiveUser?.shopName || (shopProfile.shopName && shopProfile.shopName !== 'My Store' && shopProfile.shopName !== 'Dukaan.io Corporate HQ' ? shopProfile.shopName : (isSuperAdmin ? 'Dukaan.io Corporate HQ' : 'My Store'));
+  const currentShopCode = effectiveUser?.shopCode || (shopProfile.shopCode && shopProfile.shopCode !== 'SHOP-0001' && shopProfile.shopCode !== 'DUKAAN-8821' ? shopProfile.shopCode : (isSuperAdmin ? 'DUKAAN-8821' : 'SHOP-01'));
+
   const activeAnnouncements = systemAnnouncements.filter(
     (a) => a.active && isAnnouncementTargetedToUser(a, effectiveUser)
   );
@@ -146,11 +150,11 @@ export const Header: React.FC = () => {
 
           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
             <span className="truncate max-w-[120px] sm:max-w-none font-medium text-slate-700 dark:text-slate-300">
-              {shopProfile.shopName}
+              {currentShopName}
             </span>
             <span>•</span>
             <span className="font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1 py-0.2 rounded text-[10px]">
-              {shopProfile.shopCode}
+              {currentShopCode}
             </span>
           </div>
         </div>

@@ -46,12 +46,12 @@ export const NEPAL_PROVINCES = [
 ];
 
 export const INITIAL_SHOP_PROFILE: ShopProfile = {
-  shopName: 'My Store',
-  ownerName: 'Store Owner',
+  shopName: '',
+  ownerName: '',
   phone: '',
   email: '',
   panVatNo: '',
-  shopCode: 'SHOP-0001',
+  shopCode: 'SHOP-01',
   currencySymbol: 'NPR',
   thermalPrinterType: '80mm',
   enableVat: false,
@@ -59,10 +59,10 @@ export const INITIAL_SHOP_PROFILE: ShopProfile = {
   tagline: '',
   logoUrl: '',
   address: {
-    province: 'Bagmati Province',
-    district: 'Kathmandu',
-    municipality: 'Kathmandu Metropolitan City',
-    wardNo: '1',
+    province: '',
+    district: '',
+    municipality: '',
+    wardNo: '',
     tole: '',
     fullAddress: '',
   },
