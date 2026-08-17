@@ -3,6 +3,11 @@ import { useApp } from '../../context/AppContext';
 import { StaffMember, StaffPayment, PaymentMethod } from '../../types';
 import { PasswordStrengthIndicator } from '../common/PasswordStrengthIndicator';
 import {
+  cleanPhoneNumber,
+  isValidNepaliPhoneNumber,
+  validateNepaliPhoneNumber,
+} from '../../utils/phoneValidation';
+import {
   Users,
   UserCheck,
   UserPlus,
@@ -236,6 +241,13 @@ export const StaffManagement: React.FC = () => {
       return;
     }
 
+    const phoneVal = validateNepaliPhoneNumber(staffForm.phone, true);
+    if (!phoneVal.isValid) {
+      alert(phoneVal.message);
+      return;
+    }
+
+    const cleanPhone = phoneVal.cleanPhone;
     const salaryNum = parseFloat(staffForm.basicSalary) || 0;
     const permissionsObj = {
       canDoSales: staffForm.canDoSales,
@@ -254,7 +266,7 @@ export const StaffManagement: React.FC = () => {
           updateStaffMember({
             ...editingStaff,
             name: staffForm.name.trim(),
-            phone: staffForm.phone.trim(),
+            phone: cleanPhone,
             role: staffForm.role.trim() || 'Staff',
             username: staffForm.username.trim() || editingStaff.username,
             password: staffForm.password.trim() || editingStaff.password,
@@ -274,7 +286,7 @@ export const StaffManagement: React.FC = () => {
     } else {
       addStaffMember({
         name: staffForm.name.trim(),
-        phone: staffForm.phone.trim(),
+        phone: cleanPhone,
         role: staffForm.role.trim() || 'Staff',
         username: undefined,
         password: undefined,
@@ -1058,17 +1070,48 @@ export const StaffManagement: React.FC = () => {
 
               {/* Phone Number */}
               <div>
-                <label className="block text-slate-600 dark:text-slate-300 font-medium mb-1">
-                  Phone Number <span className="text-red-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-slate-600 dark:text-slate-300 font-medium">
+                    Phone Number <span className="text-red-500">*</span>
+                  </label>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {staffForm.phone ? `${staffForm.phone.length}/10` : '10 Digits (98/97/96)'}
+                  </span>
+                </div>
                 <input
-                  type="text"
+                  type="tel"
                   required
+                  maxLength={10}
                   value={staffForm.phone}
-                  onChange={(e) => setStaffForm({ ...staffForm, phone: e.target.value })}
+                  onChange={(e) => setStaffForm({ ...staffForm, phone: cleanPhoneNumber(e.target.value) })}
                   placeholder="e.g. 9812345678"
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-800/60 font-mono text-slate-900 dark:text-slate-100 outline-none focus:border-blue-500 transition"
+                  className={`w-full px-3 py-2 rounded-lg border ${
+                    staffForm.phone && !isValidNepaliPhoneNumber(staffForm.phone)
+                      ? 'border-amber-400 bg-amber-50/20'
+                      : staffForm.phone && isValidNepaliPhoneNumber(staffForm.phone)
+                      ? 'border-emerald-400 bg-emerald-50/20'
+                      : 'border-slate-200 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-800/60'
+                  } font-mono text-slate-900 dark:text-slate-100 outline-none focus:border-blue-500 transition`}
                 />
+                {staffForm.phone && (
+                  <div className="text-[10px] mt-1">
+                    {isValidNepaliPhoneNumber(staffForm.phone) ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                        ✓ Valid Nepali mobile number
+                      </span>
+                    ) : staffForm.phone.length < 2 ? (
+                      <span className="text-slate-400">Must start with 98, 97, or 96</span>
+                    ) : !['98', '97', '96'].includes(staffForm.phone.slice(0, 2)) ? (
+                      <span className="text-rose-500 font-medium">
+                        ⚠️ Must start with 98, 97, or 96 (starts with '{staffForm.phone.slice(0, 2)}')
+                      </span>
+                    ) : (
+                      <span className="text-amber-500">
+                        {10 - staffForm.phone.length} more digit{10 - staffForm.phone.length > 1 ? 's' : ''} (10 required)
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Role / Designation */}

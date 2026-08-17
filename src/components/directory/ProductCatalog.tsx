@@ -22,7 +22,7 @@ export const ProductCatalog: React.FC = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
-  const [stockFilter, setStockFilter] = useState<'ALL' | 'AVAILABLE' | 'LOW_STOCK'>('AVAILABLE');
+  const [stockFilter, setStockFilter] = useState<'ALL' | 'AVAILABLE' | 'LOW_STOCK'>('ALL');
 
   // Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -168,8 +168,8 @@ export const ProductCatalog: React.FC = () => {
   const availableCount = products.filter((p) => p.stockQty > 0).length;
   const lowStockCount = products.filter((p) => p.stockQty <= p.minStockAlert).length;
 
-  const totalPurchaseValue = products.reduce((sum, p) => sum + p.stockQty * (p.unit.primaryCostPrice || 0), 0);
-  const totalSalesValue = products.reduce((sum, p) => sum + p.stockQty * (p.unit.primarySellingPrice || 0), 0);
+  const totalPurchaseValue = products.reduce((sum, p) => sum + p.stockQty * (p.unit?.primaryCostPrice ?? 0), 0);
+  const totalSalesValue = products.reduce((sum, p) => sum + p.stockQty * (p.unit?.primarySellingPrice ?? 0), 0);
 
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6 bg-slate-50 dark:bg-slate-950 min-h-[calc(100vh-4rem)]">

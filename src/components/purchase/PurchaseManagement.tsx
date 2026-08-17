@@ -79,12 +79,12 @@ export const PurchaseManagement: React.FC = () => {
     const clean = term.trim().toLowerCase();
     return products.find(
       (p) =>
-        p.barcode.toLowerCase() === clean ||
-        p.sku.toLowerCase() === clean ||
-        p.id.toLowerCase() === clean ||
-        p.name.toLowerCase() === clean ||
+        (p.barcode && p.barcode.toLowerCase() === clean) ||
+        (p.sku && p.sku.toLowerCase() === clean) ||
+        (p.id && p.id.toLowerCase() === clean) ||
+        (p.name && p.name.toLowerCase() === clean) ||
         (p.cartonBarcode && p.cartonBarcode.toLowerCase() === clean) ||
-        (p.unit.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === clean)
+        (p.unit?.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === clean)
     );
   };
 
@@ -95,7 +95,7 @@ export const PurchaseManagement: React.FC = () => {
 
     if (matched) {
       setScanNotification(
-        `✅ Matched existing: [${matched.id.toUpperCase()}] ${matched.name} | Cost: NPR ${matched.unit.primaryCostPrice} | Selling: NPR ${matched.unit.primarySellingPrice}`
+        `✅ Matched existing: [${(matched.id || '').toUpperCase()}] ${matched.name} | Cost: NPR ${matched.unit?.primaryCostPrice ?? 0} | Selling: NPR ${matched.unit?.primarySellingPrice ?? 0}`
       );
       setTimeout(() => setScanNotification(null), 5000);
 
@@ -105,17 +105,17 @@ export const PurchaseManagement: React.FC = () => {
         updated[targetRowIndex] = {
           ...updated[targetRowIndex],
           productName: matched.name,
-          sku: matched.sku,
-          barcode: matched.barcode,
-          cartonBarcode: matched.cartonBarcode || matched.unit.secondaryBarcode,
-          conversionRatio: matched.unit.conversionRatio,
-          secondaryCostPrice: matched.unit.secondaryCostPrice,
-          secondarySellingPrice: matched.unit.secondarySellingPrice,
-          secondaryUnit: matched.unit.secondaryUnit,
-          category: matched.category,
-          unitName: matched.unit.primaryUnit,
-          costPrice: matched.unit.primaryCostPrice,
-          sellingPrice: matched.unit.primarySellingPrice,
+          sku: matched.sku || '',
+          barcode: matched.barcode || '',
+          cartonBarcode: matched.cartonBarcode || matched.unit?.secondaryBarcode || '',
+          conversionRatio: matched.unit?.conversionRatio ?? 1,
+          secondaryCostPrice: matched.unit?.secondaryCostPrice,
+          secondarySellingPrice: matched.unit?.secondarySellingPrice,
+          secondaryUnit: matched.unit?.secondaryUnit,
+          category: matched.category || 'General Grocery',
+          unitName: matched.unit?.primaryUnit || 'Packet',
+          costPrice: matched.unit?.primaryCostPrice ?? 0,
+          sellingPrice: matched.unit?.primarySellingPrice ?? 0,
         };
         setPurchaseItems(updated);
       } else {
@@ -125,17 +125,17 @@ export const PurchaseManagement: React.FC = () => {
           updated[emptyIdx] = {
             ...updated[emptyIdx],
             productName: matched.name,
-            sku: matched.sku,
-            barcode: matched.barcode,
-            cartonBarcode: matched.cartonBarcode || matched.unit.secondaryBarcode,
-            conversionRatio: matched.unit.conversionRatio,
-            secondaryCostPrice: matched.unit.secondaryCostPrice,
-            secondarySellingPrice: matched.unit.secondarySellingPrice,
-            secondaryUnit: matched.unit.secondaryUnit,
-            category: matched.category,
-            unitName: matched.unit.primaryUnit,
-            costPrice: matched.unit.primaryCostPrice,
-            sellingPrice: matched.unit.primarySellingPrice,
+            sku: matched.sku || '',
+            barcode: matched.barcode || '',
+            cartonBarcode: matched.cartonBarcode || matched.unit?.secondaryBarcode || '',
+            conversionRatio: matched.unit?.conversionRatio ?? 1,
+            secondaryCostPrice: matched.unit?.secondaryCostPrice,
+            secondarySellingPrice: matched.unit?.secondarySellingPrice,
+            secondaryUnit: matched.unit?.secondaryUnit,
+            category: matched.category || 'General Grocery',
+            unitName: matched.unit?.primaryUnit || 'Packet',
+            costPrice: matched.unit?.primaryCostPrice ?? 0,
+            sellingPrice: matched.unit?.primarySellingPrice ?? 0,
             quantity: 1,
           };
         } else {

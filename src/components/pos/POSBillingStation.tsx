@@ -386,15 +386,19 @@ export const POSBillingStation: React.FC = () => {
     }
   };
 
-  // Filter categories
+  // Filter categories - only show categories with in-stock products
   const categories = useMemo(() => {
-    const set = new Set(products.map((p) => p.category));
+    const inStock = products.filter((p) => Number(p.stockQty || 0) > 0);
+    const set = new Set(inStock.map((p) => p.category));
     return ['ALL', ...Array.from(set)];
   }, [products]);
 
-  // Filtered products list
+  // Filtered products list - completely hide any product whose stock is 0 or less
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
+      // Hide products with 0 stock in billing
+      if (Number(p.stockQty || 0) <= 0) return false;
+
       const matchesCategory = selectedCategory === 'ALL' || p.category === selectedCategory;
       const q = searchQuery.toLowerCase().trim();
       const matchesSearch =
@@ -456,11 +460,11 @@ export const POSBillingStation: React.FC = () => {
     const cleanCode = codeToProcess.trim().toLowerCase();
     if (!cleanCode) return;
 
-    // 1. Check primary single product barcode or SKU
+    // 1. Check primary single product barcode or SKU (with stock > 0)
     const primaryMatched = products.find(
       (p) =>
-        p.barcode.toLowerCase() === cleanCode ||
-        p.sku.toLowerCase() === cleanCode
+        Number(p.stockQty || 0) > 0 &&
+        (p.barcode.toLowerCase() === cleanCode || p.sku.toLowerCase() === cleanCode)
     );
 
     if (primaryMatched) {
@@ -469,15 +473,31 @@ export const POSBillingStation: React.FC = () => {
       return;
     }
 
-    // 2. Check carton / box barcode
+    // 2. Check carton / box barcode (with stock > 0)
     const cartonMatched = products.find(
       (p) =>
-        (p.cartonBarcode && p.cartonBarcode.toLowerCase() === cleanCode) ||
-        (p.unit.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === cleanCode)
+        Number(p.stockQty || 0) > 0 &&
+        ((p.cartonBarcode && p.cartonBarcode.toLowerCase() === cleanCode) ||
+          (p.unit.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === cleanCode))
     );
 
     if (cartonMatched) {
       addToCart(cartonMatched, 1, 'SECONDARY');
+      setBarcodeInput('');
+      return;
+    }
+
+    // 3. Check if barcode belongs to an existing product whose stock is 0
+    const outOfStockMatch = products.find(
+      (p) =>
+        p.barcode.toLowerCase() === cleanCode ||
+        p.sku.toLowerCase() === cleanCode ||
+        (p.cartonBarcode && p.cartonBarcode.toLowerCase() === cleanCode) ||
+        (p.unit.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === cleanCode)
+    );
+
+    if (outOfStockMatch) {
+      alert(`Product "${outOfStockMatch.name}" is currently OUT OF STOCK (Stock: 0). Please purchase stock before billing.`);
       setBarcodeInput('');
       return;
     }
@@ -628,7 +648,7 @@ export const POSBillingStation: React.FC = () => {
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col gap-3 p-3 lg:gap-4 lg:p-6 lg:flex-row overflow-hidden bg-slate-50 dark:bg-slate-950">
+    <div className="flex flex-1 min-h-0 h-full w-full flex-col gap-2.5 lg:gap-4 lg:flex-row overflow-hidden bg-slate-50 dark:bg-slate-950">
       {/* MOBILE VIEW SEGMENTED TOGGLE (Shown on screens < lg) */}
       <div className="flex lg:hidden items-center justify-between gap-2 bg-white dark:bg-slate-900 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs shrink-0">
         <button
@@ -666,7 +686,7 @@ export const POSBillingStation: React.FC = () => {
       </div>
 
       {/* LEFT COLUMN: Product Catalog & Barcode Station (65% desktop) */}
-      <div className={`flex-1 flex-col gap-3 lg:gap-4 min-w-0 overflow-hidden ${mobileTab === 'PRODUCTS' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`flex-1 min-h-0 flex-col gap-2.5 lg:gap-4 min-w-0 overflow-hidden ${mobileTab === 'PRODUCTS' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Top Search & Express Barcode Scanner Bar */}
         <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center justify-between">
           {/* Text Search */}
@@ -878,7 +898,7 @@ export const POSBillingStation: React.FC = () => {
       </div>
 
       {/* RIGHT COLUMN: POS Cart Sidebar (35% desktop, toggleable on mobile) */}
-      <div className={`w-full flex-col rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900 lg:w-96 shrink-0 h-full overflow-hidden ${mobileTab === 'CART' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`w-full flex-col rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900 lg:w-96 shrink-0 h-full min-h-0 overflow-hidden ${mobileTab === 'CART' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Multi-Bill Sessions & Pause/Hold Toolbar */}
         <div className="flex flex-col border-b border-slate-200 bg-slate-50/90 dark:border-slate-800 dark:bg-slate-950/70 p-3 gap-2 shrink-0">
           <div className="flex items-center justify-between">
@@ -972,7 +992,7 @@ export const POSBillingStation: React.FC = () => {
         </div>
 
         {/* Express Barcode Scanner Form in Cart View */}
-        <div className="p-2.5 border-b border-slate-200 bg-slate-100/60 dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="p-2.5 border-b border-slate-200 bg-slate-100/60 dark:border-slate-800 dark:bg-slate-900/60 shrink-0">
           <form onSubmit={handleBarcodeSubmit} className="flex items-center gap-1.5">
             <div className="relative flex-1">
               <Barcode className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-indigo-500" />
@@ -1009,7 +1029,7 @@ export const POSBillingStation: React.FC = () => {
         </div>
 
         {/* Cart Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 shrink-0">
           <div className="flex items-center gap-2">
             <ShoppingCart className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
             <h3 className="font-bold text-slate-900 dark:text-slate-100 text-xs">
@@ -1027,9 +1047,9 @@ export const POSBillingStation: React.FC = () => {
         </div>
 
         {/* Cart Itemized List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
           {posCart.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center text-center p-6 text-slate-400">
+            <div className="flex h-full min-h-[140px] flex-col items-center justify-center text-center p-6 text-slate-400">
               <ShoppingCart className="h-10 w-10 text-slate-300 dark:text-slate-700 mb-2" />
               <p className="font-bold text-slate-700 dark:text-slate-300 text-xs">Cart is empty</p>
               <p className="text-[11px] text-slate-500 max-w-xs mt-1">
@@ -1102,7 +1122,7 @@ export const POSBillingStation: React.FC = () => {
         </div>
 
         {/* Cart Total Breakdown & Checkout Trigger */}
-        <div className="border-t border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/80 space-y-2">
+        <div className="border-t border-slate-200 bg-slate-50 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-950/90 space-y-2 shrink-0">
           <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400">
             <span>Subtotal:</span>
             <span className="font-semibold text-slate-800 dark:text-slate-200">
@@ -1131,9 +1151,9 @@ export const POSBillingStation: React.FC = () => {
             </div>
           )}
 
-          <div className="flex justify-between items-baseline pt-2 border-t border-slate-200 dark:border-slate-800">
+          <div className="flex justify-between items-baseline pt-1.5 border-t border-slate-200 dark:border-slate-800">
             <span className="font-bold text-slate-900 dark:text-slate-100 text-sm">Net Total:</span>
-            <span className="text-lg font-extrabold text-indigo-600 dark:text-indigo-400">
+            <span className="text-lg font-extrabold text-indigo-600 dark:text-indigo-400 font-mono">
               NPR {cartNetTotal.toLocaleString()}
             </span>
           </div>
@@ -1141,7 +1161,7 @@ export const POSBillingStation: React.FC = () => {
           <button
             disabled={posCart.length === 0}
             onClick={openCheckout}
-            className="w-full mt-2 flex items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 font-bold text-white shadow-md transition hover:bg-indigo-700 disabled:bg-slate-300 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-sm"
+            className="w-full mt-1.5 flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] py-3 px-4 font-extrabold text-white shadow-md transition disabled:bg-slate-300 dark:disabled:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed dark:bg-indigo-500 dark:hover:bg-indigo-600 text-sm"
             id="proceed-checkout-btn"
           >
             <span>Proceed to Checkout</span>
@@ -1152,11 +1172,11 @@ export const POSBillingStation: React.FC = () => {
 
       {/* FLEXIBLE SPLIT PAYMENT CHECKOUT MODAL */}
       {isCheckoutOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4 backdrop-blur-xs overflow-y-auto">
-          <div className="relative w-full max-w-xl rounded-2xl bg-white shadow-2xl dark:bg-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 my-auto">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-3 sm:p-4 backdrop-blur-xs overflow-y-auto pb-20 sm:pb-4">
+          <div className="relative w-full max-w-xl max-h-[90vh] flex flex-col rounded-2xl bg-white shadow-2xl dark:bg-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 my-auto overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 sm:px-6 py-3.5 sm:py-4 dark:border-slate-800 shrink-0">
               <div>
-                <h3 className="font-bold text-slate-900 dark:text-slate-100 text-base">
+                <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm sm:text-base">
                   Checkout & Split Payment Station
                 </h3>
                 <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
@@ -1189,7 +1209,7 @@ export const POSBillingStation: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleFinalCheckout} className="p-6 space-y-5">
+            <form onSubmit={handleFinalCheckout} className="p-4 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1">
               {/* Customer Auto Directory Lookup */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">

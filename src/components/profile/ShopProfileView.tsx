@@ -3,6 +3,11 @@ import { useApp } from '../../context/AppContext';
 import { NEPAL_PROVINCES } from '../../data/initialData';
 import { PasswordStrengthIndicator } from '../common/PasswordStrengthIndicator';
 import {
+  cleanPhoneNumber,
+  isValidNepaliPhoneNumber,
+  validateNepaliPhoneNumber,
+} from '../../utils/phoneValidation';
+import {
   Store,
   MapPin,
   Printer,
@@ -140,6 +145,7 @@ export const ShopProfileView: React.FC = () => {
 
   const [isSavedNotice, setIsSavedNotice] = useState(false);
   const [copiedCodeNotice, setCopiedCodeNotice] = useState(false);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
 
   // Password Form States
   const [currentPassword, setCurrentPassword] = useState('');
@@ -177,7 +183,16 @@ export const ShopProfileView: React.FC = () => {
 
   const handleSaveGeneral = (e: React.FormEvent) => {
     e.preventDefault();
+    setPhoneError(null);
 
+    // Validate 10-digit Nepali mobile number starting with 98, 97, or 96
+    const phoneVal = validateNepaliPhoneNumber(phone, true);
+    if (!phoneVal.isValid) {
+      setPhoneError(phoneVal.message);
+      return;
+    }
+
+    const cleanPhone = phoneVal.cleanPhone;
     const fullAddress = currentFullAddress;
     const autoShopCode = effectiveShopCode;
 
@@ -185,7 +200,7 @@ export const ShopProfileView: React.FC = () => {
       ...shopProfile,
       shopName: shopName.trim(),
       ownerName: ownerName.trim(),
-      phone: phone.trim(),
+      phone: cleanPhone,
       email: email.trim(),
       tagline: tagline.trim(),
       logoUrl: logoUrl.trim(),
@@ -420,18 +435,72 @@ export const ShopProfileView: React.FC = () => {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                      <Phone className="h-3.5 w-3.5 text-slate-400" />
-                      <span>Contact Mobile Number *</span>
-                    </label>
-                    <input
-                      type="tel"
-                      required
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="9800000000"
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-mono font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <Phone className="h-3.5 w-3.5 text-slate-400" />
+                        <span>Contact Mobile Number *</span>
+                      </label>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {phone ? `${phone.length}/10` : '10 Digits (98/97/96)'}
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="tel"
+                        required
+                        maxLength={10}
+                        value={phone}
+                        onChange={(e) => {
+                          setPhone(cleanPhoneNumber(e.target.value));
+                          if (phoneError) setPhoneError(null);
+                        }}
+                        placeholder="e.g. 9841234567"
+                        className={`w-full rounded-xl border ${
+                          phoneError
+                            ? 'border-rose-500 bg-rose-50/50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-300'
+                            : phone && isValidNepaliPhoneNumber(phone)
+                            ? 'border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/20 text-slate-900 dark:text-slate-100'
+                            : phone && !isValidNepaliPhoneNumber(phone)
+                            ? 'border-amber-500 bg-amber-50/30 dark:bg-amber-950/20 text-slate-900 dark:text-slate-100'
+                            : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
+                        } px-3 py-2.5 text-xs font-mono font-bold outline-none focus:border-indigo-500`}
+                      />
+                      {phone && (
+                        <div className="absolute right-3 top-3 pointer-events-none">
+                          {isValidNepaliPhoneNumber(phone) ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : (
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {phoneError ? (
+                      <p className="text-[11px] font-bold text-rose-500 flex items-center gap-1 mt-1">
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        <span>{phoneError}</span>
+                      </p>
+                    ) : phone ? (
+                      <div className="text-[10px] mt-1">
+                        {isValidNepaliPhoneNumber(phone) ? (
+                          <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                            ✓ Valid Nepali Mobile Number (10 digits)
+                          </span>
+                        ) : phone.length < 2 ? (
+                          <span className="text-slate-500">
+                            Must start with 98, 97, or 96
+                          </span>
+                        ) : !['98', '97', '96'].includes(phone.slice(0, 2)) ? (
+                          <span className="text-rose-500 font-bold">
+                            ⚠️ Must start with 98, 97, or 96 (starts with '{phone.slice(0, 2)}')
+                          </span>
+                        ) : (
+                          <span className="text-amber-600 dark:text-amber-400 font-medium">
+                            Enter {10 - phone.length} more digit{10 - phone.length > 1 ? 's' : ''} (10 digits required)
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="space-y-1">

@@ -4,6 +4,11 @@ import { SubscriptionPlan, AuthUser } from '../../types';
 import { supabase } from '../../lib/supabase';
 import { PasswordStrengthIndicator } from '../common/PasswordStrengthIndicator';
 import {
+  cleanPhoneNumber,
+  isValidNepaliPhoneNumber,
+  validateNepaliPhoneNumber,
+} from '../../utils/phoneValidation';
+import {
   Store,
   Lock,
   User,
@@ -399,6 +404,14 @@ export const LoginPage: React.FC = () => {
       return;
     }
 
+    // Strict Nepali Mobile Number Validation (10 digits starting with 98, 97, or 96)
+    const phoneValidation = validateNepaliPhoneNumber(signupPhone, true);
+    if (!phoneValidation.isValid) {
+      setSignupErrorMsg(phoneValidation.message);
+      return;
+    }
+    const cleanPhone = phoneValidation.cleanPhone;
+
     const cleanEmail = signupEmail.trim().toLowerCase();
 
     // Check duplicate local user before sending code
@@ -418,10 +431,10 @@ export const LoginPage: React.FC = () => {
       // User-requested metadata properties
       shop_name: shopName.trim(),
       shopName: shopName.trim(),
-      contact_no: signupPhone.trim(),
-      contactNo: signupPhone.trim(),
-      phone: signupPhone.trim(),
-      phone_number: signupPhone.trim(),
+      contact_no: cleanPhone,
+      contactNo: cleanPhone,
+      phone: cleanPhone,
+      phone_number: cleanPhone,
       email: cleanEmail,
       choose_plan: selectedPlan,
       choosePlan: selectedPlan,
@@ -454,7 +467,7 @@ export const LoginPage: React.FC = () => {
       username: cleanEmail.split('@')[0],
       password: signupPassword,
       email: cleanEmail,
-      phone: signupPhone,
+      phone: cleanPhone,
       shopName,
       subscriptionPlan: selectedPlan,
       appliedCouponCode: appliedCoupon?.code,
@@ -1754,15 +1767,67 @@ export const LoginPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 mb-1 tracking-wide uppercase">Phone Number</label>
-                    <input
-                      type="text"
-                      value={signupPhone}
-                      onChange={(e) => setSignupPhone(e.target.value)}
-                      placeholder="e.g. 9841234567"
-                      className="w-full px-3.5 py-2 rounded-xl bg-slate-950/70 border border-slate-800/80 text-white placeholder:text-slate-500 outline-none focus:border-blue-500/80 focus:ring-1 focus:ring-blue-500/20 transition text-xs"
-                      id="modal-signup-phone-input"
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-[11px] font-semibold text-slate-300 tracking-wide uppercase">
+                        Phone Number *
+                      </label>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {signupPhone ? `${signupPhone.length}/10` : '10 Digits (98/97/96)'}
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="tel"
+                        value={signupPhone}
+                        onChange={(e) => {
+                          setSignupPhone(cleanPhoneNumber(e.target.value));
+                          if (signupErrorMsg && signupErrorMsg.toLowerCase().includes('phone')) {
+                            setSignupErrorMsg('');
+                          }
+                        }}
+                        placeholder="e.g. 9841234567"
+                        maxLength={10}
+                        className={`w-full pl-3.5 pr-8 py-2 rounded-xl bg-slate-950/70 border ${
+                          signupPhone && !isValidNepaliPhoneNumber(signupPhone)
+                            ? 'border-amber-500/80 text-amber-200 focus:border-amber-500'
+                            : signupPhone && isValidNepaliPhoneNumber(signupPhone)
+                            ? 'border-emerald-500/80 text-emerald-200 focus:border-emerald-500'
+                            : 'border-slate-800/80 text-white focus:border-blue-500/80'
+                        } placeholder:text-slate-500 outline-none focus:ring-1 focus:ring-blue-500/20 transition text-xs font-mono`}
+                        required
+                        id="modal-signup-phone-input"
+                      />
+                      {signupPhone && (
+                        <div className="absolute right-2.5 top-2.5 pointer-events-none">
+                          {isValidNepaliPhoneNumber(signupPhone) ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                          ) : (
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {signupPhone && (
+                      <div className="mt-1 text-[10px]">
+                        {isValidNepaliPhoneNumber(signupPhone) ? (
+                          <span className="text-emerald-400 font-medium">
+                            ✓ Valid Nepali mobile number
+                          </span>
+                        ) : signupPhone.length < 2 ? (
+                          <span className="text-slate-400">
+                            Must start with 98, 97, or 96
+                          </span>
+                        ) : !['98', '97', '96'].includes(signupPhone.slice(0, 2)) ? (
+                          <span className="text-rose-400 font-semibold">
+                            ⚠️ Must start with 98, 97, or 96 (starts with '{signupPhone.slice(0, 2)}')
+                          </span>
+                        ) : signupPhone.length < 10 ? (
+                          <span className="text-amber-400 font-medium">
+                            Enter {10 - signupPhone.length} more digit{10 - signupPhone.length > 1 ? 's' : ''} (10 digits total)
+                          </span>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
 
                   <div>

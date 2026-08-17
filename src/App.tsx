@@ -194,7 +194,13 @@ const AppContent: React.FC = () => {
         )}
 
         {/* Scrollable Active View Area */}
-        <main className="flex-1 overflow-y-auto pb-16 md:pb-0 p-4 sm:p-6">
+        <main
+          className={`flex-1 ${
+            activeTab === 'pos'
+              ? 'flex flex-col min-h-0 overflow-hidden p-2 sm:p-3 lg:p-6 pb-16 lg:pb-0'
+              : 'overflow-y-auto p-4 sm:p-6 pb-20 lg:pb-6'
+          }`}
+        >
           {renderActiveView()}
         </main>
 

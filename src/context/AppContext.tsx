@@ -8,6 +8,7 @@ import {
   KhataTransaction,
   PaymentMethod,
   Product,
+  UnitPricing,
   ReferralInfo,
   ReferralRewardRule,
   ShopProfile,
@@ -398,14 +399,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const [shopProfile, setShopProfile] = useState<ShopProfile>(INITIAL_SHOP_PROFILE);
-  const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
-  const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
-  const [suppliers, setSuppliers] = useState<Supplier[]>(INITIAL_SUPPLIERS);
-  const [invoices, setInvoices] = useState<Invoice[]>(INITIAL_INVOICES);
-  const [purchases, setPurchases] = useState<StockPurchase[]>(INITIAL_PURCHASES);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [purchases, setPurchases] = useState<StockPurchase[]>([]);
   const [salesReturns, setSalesReturns] = useState<SalesReturn[]>([]);
   const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>([]);
-  const [khataTransactions, setKhataTransactions] = useState<KhataTransaction[]>(INITIAL_KHATA_TRANSACTIONS);
+  const [khataTransactions, setKhataTransactions] = useState<KhataTransaction[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>(INITIAL_SUGGESTIONS);
   const [supportMessages, setSupportMessages] = useState<SupportMessage[]>(() => {
     try {
@@ -416,10 +417,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     return INITIAL_SUPPORT_MESSAGES;
   });
-  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [staffList, setStaffList] = useState<StaffMember[]>(INITIAL_STAFF);
-  const [staffPayments, setStaffPayments] = useState<StaffPayment[]>(INITIAL_STAFF_PAYMENTS);
-  const [supplierAdvancePayments, setSupplierAdvancePayments] = useState<SupplierAdvancePayment[]>(INITIAL_SUPPLIER_ADVANCE_PAYMENTS);
+  const [staffPayments, setStaffPayments] = useState<StaffPayment[]>([]);
+  const [supplierAdvancePayments, setSupplierAdvancePayments] = useState<SupplierAdvancePayment[]>([]);
 
   const [impersonatedUser, setImpersonatedUser] = useState<AuthUser | null>(null);
   const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
@@ -2820,489 +2821,758 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }));
   };
 
+  // Helper for matching records strictly to active shop
+  const isShopMatchRecord = (r: any, sCode: string, sName: string, uId?: string): boolean => {
+    if (!r) return false;
+    const rCode = String(r.shop_code || r.shopCode || r.store_code || '').trim();
+    const rName = String(r.shop_name || r.shopName || r.store_name || '').trim();
+    const rUser = String(r.user_id || r.userId || '').trim();
+
+    const cleanSCode = (sCode || '').trim().toUpperCase();
+    const cleanSName = (sName || '').trim().toLowerCase();
+    const cleanRCode = rCode.toUpperCase();
+    const cleanRName = rName.toLowerCase();
+    const cleanUId = (uId || '').trim();
+    const cleanRUser = rUser;
+
+    const normSCode = cleanSCode.replace(/[-_\s]/g, '');
+    const normRCode = cleanRCode.replace(/[-_\s]/g, '');
+
+    // 1. If both active shop and record have shop code
+    if (normSCode && normRCode) {
+      if (normSCode === normRCode || cleanRCode === cleanSCode) {
+        return true;
+      }
+      return false; // Code explicitly differs -> DO NOT MATCH
+    }
+
+    // 2. If both active shop and record have shop name
+    if (cleanSName && cleanRName) {
+      if (cleanSName === cleanRName) {
+        return true;
+      }
+      return false; // Name explicitly differs -> DO NOT MATCH
+    }
+
+    // 3. Match User ID if available and codes/names didn't conflict
+    if (cleanUId && cleanRUser) {
+      if (cleanRUser === cleanUId || toValidUuid(cleanRUser) === cleanUId || cleanRUser === toValidUuid(cleanUId)) {
+        return true;
+      }
+      return false;
+    }
+
+    // 4. If record has matching code or matching name to current active store
+    if (normSCode && normRCode && normSCode === normRCode) return true;
+    if (cleanSName && cleanRName && cleanSName === cleanRName) return true;
+
+    return false;
+  };
+
+  // Helper to parse Product rows from database
+  const parseProductRow = (r: any, defaultShopCode: string, defaultShopName: string): Product => {
+    let u = r.unit;
+    if (typeof u === 'string') {
+      try {
+        if (u.trim().startsWith('{')) {
+          u = JSON.parse(u);
+        }
+      } catch {}
+    }
+
+    const primUnit =
+      (typeof u === 'object' && u?.primaryUnit) ||
+      (typeof u === 'string' && u.trim() ? u.trim() : '') ||
+      r.primary_unit ||
+      r.primaryUnit ||
+      r.unit_name ||
+      r.unitName ||
+      r.buy_unit ||
+      r.buyUnit ||
+      'Packet';
+
+    const primCost = Number(
+      (typeof u === 'object' && (u?.primaryCostPrice ?? u?.costPrice ?? u?.buyPrice)) ??
+        r.primary_cost_price ??
+        r.primaryCostPrice ??
+        r.cost_price ??
+        r.costPrice ??
+        r.purchase_price ??
+        r.purchasePrice ??
+        r.cost ??
+        r.buying_price ??
+        0
+    );
+
+    const primSell = Number(
+      (typeof u === 'object' && (u?.primarySellingPrice ?? u?.sellingPrice ?? u?.salePrice ?? u?.price)) ??
+        r.primary_selling_price ??
+        r.primarySellingPrice ??
+        r.selling_price ??
+        r.sellingPrice ??
+        r.sale_price ??
+        r.salePrice ??
+        r.price ??
+        r.mrp ??
+        r.rate ??
+        0
+    );
+
+    const secUnit =
+      (typeof u === 'object' && u?.secondaryUnit) ||
+      r.secondary_unit ||
+      r.secondaryUnit ||
+      undefined;
+
+    const convRatio = Number(
+      (typeof u === 'object' && (u?.conversionRatio ?? u?.conversionFactor)) ??
+        r.conversion_ratio ??
+        r.conversionRatio ??
+        r.conversion_factor ??
+        1
+    );
+
+    const secCost =
+      typeof u === 'object' && u?.secondaryCostPrice != null
+        ? Number(u.secondaryCostPrice)
+        : r.secondary_cost_price != null
+        ? Number(r.secondary_cost_price)
+        : undefined;
+
+    const secSell =
+      typeof u === 'object' && u?.secondarySellingPrice != null
+        ? Number(u.secondarySellingPrice)
+        : r.secondary_selling_price != null
+        ? Number(r.secondary_selling_price)
+        : undefined;
+
+    const secBarcode =
+      (typeof u === 'object' && u?.secondaryBarcode) ||
+      r.secondary_barcode ||
+      r.secondaryBarcode ||
+      r.carton_barcode ||
+      r.cartonBarcode ||
+      undefined;
+
+    const parsedUnit: UnitPricing = {
+      primaryUnit: primUnit || 'Packet',
+      primaryCostPrice: isNaN(primCost) ? 0 : primCost,
+      primarySellingPrice: isNaN(primSell) ? 0 : primSell,
+      secondaryUnit: secUnit ? String(secUnit).trim() : undefined,
+      conversionRatio: isNaN(convRatio) || convRatio <= 0 ? 1 : convRatio,
+      secondaryCostPrice: secCost != null && !isNaN(secCost) ? secCost : undefined,
+      secondarySellingPrice: secSell != null && !isNaN(secSell) ? secSell : undefined,
+      secondaryBarcode: secBarcode ? String(secBarcode).trim() : undefined,
+    };
+
+    return {
+      id: String(r.id),
+      sku: r.sku || r.item_code || r.code || '',
+      barcode: r.barcode || r.upc || '',
+      cartonBarcode: r.carton_barcode || r.cartonBarcode || parsedUnit.secondaryBarcode || '',
+      name: r.name || r.product_name || r.title || r.item_name || 'Unnamed Product',
+      category: r.category || r.category_name || 'General Grocery',
+      stockQty: Number(r.stock_qty ?? r.stockQty ?? r.quantity ?? r.stock ?? r.current_stock ?? r.qty ?? 0),
+      minStockAlert: Number(r.min_stock_alert ?? r.minStockAlert ?? r.low_stock_threshold ?? 5),
+      rackNo: r.rack_no || r.rackNo || r.rack || r.shelf_no || undefined,
+      unit: parsedUnit,
+      supplierId: r.supplier_id || r.supplierId || '',
+      supplierName: r.supplier_name || r.supplierName || '',
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+      createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+      updatedAt: r.updated_at || r.updatedAt || new Date().toISOString(),
+    };
+  };
+
+  // Helper to parse Supplier rows from database
+  const parseSupplierRow = (r: any, defaultShopCode: string, defaultShopName: string): Supplier => {
+    return {
+      id: String(r.id),
+      name: r.name || r.supplier_name || r.supplierName || r.vendor_name || r.company_name || 'Wholesale Supplier',
+      companyName: r.company_name || r.companyName || r.company || '',
+      phone: r.phone || r.contact_no || r.mobile || '',
+      email: r.email || '',
+      address: r.address || r.city || '',
+      panVat: r.pan_vat || r.panVat || r.pan_no || r.vat_no || '',
+      totalPurchased: Number(r.total_purchased ?? r.totalPurchased ?? r.total_purchase ?? 0),
+      pendingPayable: Number(r.pending_payable ?? r.pendingPayable ?? r.payable ?? r.balance ?? 0),
+      advanceBalance: Number(r.advance_balance ?? r.advanceBalance ?? r.advance ?? 0),
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+      createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+    };
+  };
+
+  // Helper to parse Customer rows from database
+  const parseCustomerRow = (r: any, defaultShopCode: string, defaultShopName: string): Customer => {
+    return {
+      id: String(r.id),
+      name: r.name || r.customer_name || r.customerName || 'Customer',
+      phone: r.phone || r.contact_no || r.mobile || '',
+      email: r.email || '',
+      address: r.address || '',
+      panVat: r.pan_vat || r.panVat || r.pan_no || '',
+      creditLimit: Number(r.credit_limit ?? r.creditLimit ?? 0),
+      totalPurchases: Number(r.total_purchases ?? r.totalPurchases ?? 0),
+      currentBalance: Number(r.current_balance ?? r.currentBalance ?? r.balance ?? r.udharo ?? 0),
+      advanceBalance: Number(r.advance_balance ?? r.advanceBalance ?? r.advance ?? 0),
+      lastPurchaseDate: r.last_purchase_date || r.lastPurchaseDate || '',
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+      createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+    };
+  };
+
+  // Helper to parse Invoice rows from database
+  const parseInvoiceRow = (r: any, defaultShopCode: string, defaultShopName: string): Invoice => {
+    let parsedItems: any[] = [];
+    if (Array.isArray(r.items)) {
+      parsedItems = r.items;
+    } else if (typeof r.items === 'string') {
+      try {
+        parsedItems = JSON.parse(r.items);
+      } catch {
+        parsedItems = [];
+      }
+    }
+
+    let parsedSplit = r.split_payment || r.splitPayment;
+    if (typeof parsedSplit === 'string') {
+      try {
+        parsedSplit = JSON.parse(parsedSplit);
+      } catch {
+        parsedSplit = { cash: 0, bank: 0, esewa: 0, credit: 0 };
+      }
+    }
+
+    return {
+      id: String(r.id),
+      invoiceNo: r.invoice_no || r.invoiceNo || r.bill_no || `INV-${r.id}`,
+      customerId: r.customer_id || r.customerId || '',
+      customerName: r.customer_name || r.customerName || 'Walk-in Customer',
+      customerPhone: r.customer_phone || r.customerPhone || r.phone || '',
+      items: parsedItems,
+      subtotal: Number(r.subtotal ?? r.total ?? 0),
+      discount: Number(r.discount ?? 0),
+      taxAmount: Number(r.tax_amount ?? r.taxAmount ?? r.tax ?? 0),
+      netAmount: Number(r.net_amount ?? r.netAmount ?? r.grand_total ?? r.total_amount ?? 0),
+      splitPayment: parsedSplit || { cash: 0, bank: 0, esewa: 0, credit: 0 },
+      paymentStatus: r.payment_status || r.paymentStatus || 'PAID',
+      cashierName: r.cashier_name || r.cashierName || 'POS User',
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+      createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+    };
+  };
+
+  // Helper to parse StockPurchase rows from database
+  const parsePurchaseRow = (
+    r: any,
+    defaultShopCode: string,
+    defaultShopName: string,
+    purchaseItemsLookup?: Record<string, any[]>
+  ): StockPurchase => {
+    let parsedItems: any[] = [];
+    if (Array.isArray(r.items)) {
+      parsedItems = r.items;
+    } else if (typeof r.items === 'string') {
+      try {
+        parsedItems = JSON.parse(r.items);
+      } catch {
+        parsedItems = [];
+      }
+    }
+
+    if ((!parsedItems || parsedItems.length === 0) && purchaseItemsLookup && r.id && purchaseItemsLookup[String(r.id)]) {
+      parsedItems = purchaseItemsLookup[String(r.id)];
+    }
+
+    const cleanItems = (parsedItems || []).map((item: any) => ({
+      productId: String(item.productId || item.product_id || item.id || ''),
+      productName: String(item.productName || item.product_name || item.name || 'Product'),
+      unitName: String(item.unitName || item.unit_name || item.unit || 'Packet'),
+      quantity: Number(item.quantity ?? item.qty ?? 1),
+      costPrice: Number(item.costPrice ?? item.purchasePrice ?? item.purchase_price ?? item.cost_price ?? item.unitPrice ?? item.price ?? 0),
+      totalAmount: Number(item.totalAmount ?? item.total_amount ?? item.subtotal ?? ((Number(item.quantity ?? 1)) * Number(item.costPrice ?? item.purchase_price ?? 0))),
+    }));
+
+    const totalAmt = Number(
+      r.total_amount ??
+      r.totalAmount ??
+      r.grand_total ??
+      r.amount ??
+      r.bill_amount ??
+      r.total ??
+      cleanItems.reduce((sum, it) => sum + (it.totalAmount || 0), 0)
+    );
+
+    const cashPd = Number(
+      r.cash_paid ??
+      r.cashPaid ??
+      r.paid_amount ??
+      r.paid ??
+      0
+    );
+
+    const suppCredit = Number(
+      r.supplier_credit ??
+      r.supplierCredit ??
+      r.credit_amount ??
+      r.due_amount ??
+      r.udharo ??
+      Math.max(0, totalAmt - cashPd)
+    );
+
+    return {
+      id: String(r.id),
+      purchaseNo: r.purchase_no || r.purchaseNo || r.bill_no || r.invoice_no || `PUR-${r.id}`,
+      supplierId: r.supplier_id || r.supplierId || '',
+      supplierName: r.supplier_name || r.supplierName || r.vendor_name || 'Wholesale Supplier',
+      invoiceRef: r.invoice_ref || r.invoiceRef || r.ref_no || r.bill_ref || 'REF-N/A',
+      items: cleanItems,
+      totalAmount: totalAmt,
+      cashPaid: cashPd,
+      supplierCredit: suppCredit,
+      purchaseDate: r.purchase_date || r.purchaseDate || r.bill_date || r.created_at || new Date().toISOString(),
+      notes: r.notes || r.note || r.remarks || '',
+      performedBy: r.performed_by || r.performedBy || r.created_by || '',
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+    };
+  };
+
+  // Helper to parse Expense rows from database
+  const parseExpenseRow = (r: any, defaultShopCode: string, defaultShopName: string): Expense => {
+    return {
+      id: String(r.id),
+      expenseNo: r.expense_no || r.expenseNo || `EXP-${r.id}`,
+      category: r.category || 'General',
+      title: r.title || r.name || r.description || 'Expense',
+      amount: Number(r.amount || 0),
+      paymentMethod: r.payment_method || r.paymentMethod || 'CASH',
+      paidTo: r.paid_to || r.paidTo || '',
+      notes: r.notes || r.note || '',
+      expenseDate: r.expense_date || r.expenseDate || r.created_at || new Date().toISOString(),
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+      createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+    };
+  };
+
+  // Helper to parse Khata rows from database
+  const parseKhataRow = (r: any, defaultShopCode: string, defaultShopName: string): KhataTransaction => {
+    return {
+      id: String(r.id),
+      entityType: r.entity_type || r.entityType || 'CUSTOMER',
+      entityId: r.entity_id || r.entityId || '',
+      entityName: r.entity_name || r.entityName || '',
+      type: r.type || 'CREDIT_GIVEN',
+      amount: Number(r.amount || 0),
+      paymentMethod: r.payment_method || r.paymentMethod || 'CASH',
+      referenceInvoiceId: r.reference_invoice_id || r.referenceInvoiceId || '',
+      note: r.note || r.notes || '',
+      createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+      balanceAfter: Number(r.balance_after ?? r.balanceAfter ?? 0),
+      performedBy: r.performed_by || r.performedBy || '',
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+    };
+  };
+
+  // Helper to parse Supplier Advance rows from database
+  const parseSupplierAdvanceRow = (r: any, defaultShopCode: string, defaultShopName: string): SupplierAdvancePayment => {
+    return {
+      id: String(r.id),
+      supplierId: r.supplier_id || r.supplierId || '',
+      supplierName: r.supplier_name || r.supplierName || 'Supplier',
+      amount: Number(r.amount || 0),
+      paymentMethod: r.payment_method || r.paymentMethod || 'CASH',
+      paymentDate: r.payment_date || r.paymentDate || r.created_at || new Date().toISOString().split('T')[0],
+      notes: r.notes || r.note || '',
+      recordedBy: r.recorded_by || r.recordedBy || '',
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+      createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+    };
+  };
+
+  // Helper to parse Sales Return rows from database
+  const parseSalesReturnRow = (r: any, defaultShopCode: string, defaultShopName: string): SalesReturn => {
+    let parsedItems: any[] = [];
+    if (Array.isArray(r.items)) parsedItems = r.items;
+    else if (typeof r.items === 'string') {
+      try { parsedItems = JSON.parse(r.items); } catch { parsedItems = []; }
+    }
+    return {
+      id: String(r.id),
+      returnNo: r.return_no || r.returnNo || `SR-${r.id}`,
+      invoiceNo: r.invoice_no || r.invoiceNo || r.invoice_id || r.invoiceId || '',
+      customerId: r.customer_id || r.customerId || '',
+      customerName: r.customer_name || r.customerName || 'Walk-in Customer',
+      customerPhone: r.customer_phone || r.customerPhone || '',
+      items: parsedItems,
+      totalRefundAmount: Number(r.total_refund_amount ?? r.totalRefundAmount ?? 0),
+      refundMethod: r.refund_method || r.refundMethod || 'CASH',
+      reason: r.reason || '',
+      returnDate: r.return_date || r.returnDate || r.created_at || new Date().toISOString(),
+      performedBy: r.performed_by || r.performedBy || r.recorded_by || r.recordedBy || '',
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+    };
+  };
+
+  // Helper to parse Purchase Return rows from database
+  const parsePurchaseReturnRow = (r: any, defaultShopCode: string, defaultShopName: string): PurchaseReturn => {
+    let parsedItems: any[] = [];
+    if (Array.isArray(r.items)) parsedItems = r.items;
+    else if (typeof r.items === 'string') {
+      try { parsedItems = JSON.parse(r.items); } catch { parsedItems = []; }
+    }
+    return {
+      id: String(r.id),
+      returnNo: r.return_no || r.returnNo || `PR-${r.id}`,
+      purchaseNo: r.purchase_no || r.purchaseNo || r.purchase_id || r.purchaseId || '',
+      supplierId: r.supplier_id || r.supplierId || '',
+      supplierName: r.supplier_name || r.supplierName || 'Wholesale Supplier',
+      items: parsedItems,
+      totalRefundAmount: Number(r.total_refund_amount ?? r.totalRefundAmount ?? 0),
+      refundMethod: r.refund_method || r.refundMethod || 'CASH',
+      reason: r.reason || '',
+      returnDate: r.return_date || r.returnDate || r.created_at || new Date().toISOString(),
+      performedBy: r.performed_by || r.performedBy || r.recorded_by || r.recordedBy || '',
+      shopCode: r.shop_code || r.shopCode || defaultShopCode,
+      shopName: r.shop_name || r.shopName || defaultShopName,
+    };
+  };
+
   // Fetch shop-specific data from Supabase DB every 10 seconds and deduplicate smartly
   const fetchDataFromSupabase = async () => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) return;
     const sCode = (activeStoreUser?.shopCode || currentUser?.shopCode || shopProfile?.shopCode || '').trim();
     const sName = (activeStoreUser?.shopName || currentUser?.shopName || shopProfile?.shopName || '').trim();
+    const uId = activeStoreUser?.id || currentUser?.id;
     if (!sCode || sCode === 'N/A' || !activeStoreUser) return;
 
-    // Strict multi-tenancy validator: verifies both shop code and shop name
-    const isStrictShopRecord = (r: any): boolean => {
-      if (!sCode) return false;
-      const rCode = (r.shop_code || r.shopCode || '').trim();
-      const rName = (r.shop_name || r.shopName || '').trim();
+    // Strict multi-tenancy validator: verifies shop code, shop name or user ID
+    const isStrictShopRecord = (r: any): boolean => isShopMatchRecord(r, sCode, sName, uId);
 
-      // If the row contains a shop code, it MUST match the active shop code (case-insensitive)
-      if (rCode && rCode.toUpperCase() !== sCode.toUpperCase()) {
-        return false;
+    const fetchShopRows = async (tableName: string, altTableName?: string): Promise<any[]> => {
+      const results: any[] = [];
+      const seenIds = new Set<string>();
+
+      const addUniqueRows = (rows: any[]) => {
+        if (!rows || !Array.isArray(rows)) return;
+        for (const r of rows) {
+          const id = String(r.id || '');
+          if (id && !seenIds.has(id) && isStrictShopRecord(r)) {
+            seenIds.add(id);
+            results.push(r);
+          }
+        }
+      };
+
+      try {
+        // 1. Query by shop_code
+        if (sCode) {
+          const { data: byCode } = await supabase.from(tableName).select('*').eq('shop_code', sCode);
+          if (byCode && byCode.length > 0) addUniqueRows(byCode);
+          else {
+            const { data: byIlikeCode } = await supabase.from(tableName).select('*').ilike('shop_code', sCode);
+            if (byIlikeCode && byIlikeCode.length > 0) addUniqueRows(byIlikeCode);
+          }
+        }
+
+        // 2. Query by shop_name
+        if (sName) {
+          const { data: byName } = await supabase.from(tableName).select('*').eq('shop_name', sName);
+          if (byName && byName.length > 0) addUniqueRows(byName);
+          else {
+            const { data: byIlikeName } = await supabase.from(tableName).select('*').ilike('shop_name', sName);
+            if (byIlikeName && byIlikeName.length > 0) addUniqueRows(byIlikeName);
+          }
+        }
+
+        // 3. Query by user_id
+        if (uId) {
+          const { data: byUser } = await supabase.from(tableName).select('*').eq('user_id', uId);
+          if (byUser && byUser.length > 0) addUniqueRows(byUser);
+        }
+
+        // 4. Try alternate table name if provided and results are empty
+        if (results.length === 0 && altTableName) {
+          if (sCode) {
+            const { data: altCode } = await supabase.from(altTableName).select('*').eq('shop_code', sCode);
+            if (altCode && altCode.length > 0) addUniqueRows(altCode);
+          }
+          if (results.length === 0 && sName) {
+            const { data: altName } = await supabase.from(altTableName).select('*').eq('shop_name', sName);
+            if (altName && altName.length > 0) addUniqueRows(altName);
+          }
+          if (results.length === 0 && uId) {
+            const { data: altUser } = await supabase.from(altTableName).select('*').eq('user_id', uId);
+            if (altUser && altUser.length > 0) addUniqueRows(altUser);
+          }
+        }
+      } catch (err) {
+        console.warn(`Query error on table ${tableName}:`, err);
       }
 
-      // If the row contains a shop name AND active shop has a name, it MUST match (case-insensitive)
-      if (sName && rName && rName.toLowerCase() !== sName.toLowerCase()) {
-        return false;
-      }
-
-      // If both code and name are present, both must match
-      if (rCode && rName) {
-        return rCode.toUpperCase() === sCode.toUpperCase() && (!sName || rName.toLowerCase() === sName.toLowerCase());
-      }
-
-      // If only code is present
-      if (rCode) {
-        return rCode.toUpperCase() === sCode.toUpperCase();
-      }
-
-      // If only name is present and matches
-      if (rName && sName) {
-        return rName.toLowerCase() === sName.toLowerCase();
-      }
-
-      return false;
+      return results;
     };
 
     try {
-      // 1. Fetch Products for active shop code & deduplicate smartly with strict shop name & code verification
-      const { data: remoteProducts } = await supabase.from('products').select('*').eq('shop_code', sCode);
-      if (remoteProducts) {
-        setProducts((prev) => {
-          const validRemote = remoteProducts
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => {
-              const mapped: Product = {
-                id: String(r.id),
-                sku: r.sku || '',
-                barcode: r.barcode || '',
-                cartonBarcode: r.carton_barcode || r.cartonBarcode || '',
-                name: r.name || 'Unnamed Product',
-                category: r.category || 'General',
-                stockQty: Number(r.stock_qty ?? r.stockQty ?? 0),
-                minStockAlert: Number(r.min_stock_alert ?? r.minStockAlert ?? 5),
-                unit: r.unit || { buyUnit: 'Pcs', sellUnit: 'Pcs', conversionFactor: 1 },
-                supplierId: r.supplier_id || r.supplierId || '',
-                supplierName: r.supplier_name || r.supplierName || '',
-                shopCode: r.shop_code || r.shopCode || sCode,
-                shopName: r.shop_name || r.shopName || sName,
-                createdAt: r.created_at || r.createdAt || new Date().toISOString(),
-                updatedAt: r.updated_at || r.updatedAt || new Date().toISOString(),
-              };
-              return mapped;
-            });
+      // 1. Fetch Products for active shop code & deduplicate smartly with multi-strategy matching
+      const rawRemoteProducts = await fetchShopRows('products');
+      setProducts((prev) => {
+        const validRemote = rawRemoteProducts
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parseProductRow(r, sCode, sName));
 
-          const remoteIdSet = new Set(validRemote.map((p) => p.id));
-          const localPending = prev.filter((p) => !remoteIdSet.has(p.id) && !deletedRecordIds.has(p.id) && isStrictShopRecord(p));
-          const combined = [...validRemote, ...localPending];
+        const remoteIdSet = new Set(validRemote.map((p) => p.id));
+        const localPending = prev.filter((p) => !remoteIdSet.has(p.id) && !deletedRecordIds.has(p.id) && isStrictShopRecord(p));
+        const combined = [...validRemote, ...localPending];
 
-          const seen = new Set<string>();
-          const deduped: Product[] = [];
-          for (const p of combined) {
-            const rBarcode = (p.barcode && p.barcode !== 'N/A' && p.barcode.trim()) ? `bc-${p.barcode.trim()}` : '';
-            const rSku = (p.sku && p.sku !== 'N/A' && p.sku.trim()) ? `sku-${p.sku.trim().toLowerCase()}` : '';
-            const rName = p.name ? `name-${p.name.trim().toLowerCase()}` : '';
-            const key = rBarcode || rSku || rName || p.id;
+        const seen = new Set<string>();
+        const deduped: Product[] = [];
+        for (const p of combined) {
+          const rBarcode = (p.barcode && p.barcode !== 'N/A' && p.barcode.trim()) ? `bc-${p.barcode.trim()}` : '';
+          const rSku = (p.sku && p.sku !== 'N/A' && p.sku.trim()) ? `sku-${p.sku.trim().toLowerCase()}` : '';
+          const rName = p.name ? `name-${p.name.trim().toLowerCase()}` : '';
+          const key = rBarcode || rSku || rName || p.id;
 
-            if (!seen.has(p.id) && !seen.has(key)) {
-              seen.add(p.id);
-              seen.add(key);
-              deduped.push(p);
+          if (!seen.has(p.id) && !seen.has(key)) {
+            seen.add(p.id);
+            seen.add(key);
+            deduped.push(p);
+          }
+        }
+        return deduped;
+      });
+
+      // 2. Fetch Customers for active shop code & deduplicate
+      const rawRemoteCustomers = await fetchShopRows('customers');
+      setCustomers((prev) => {
+        const validRemote = rawRemoteCustomers
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parseCustomerRow(r, sCode, sName));
+
+        const remoteIdSet = new Set(validRemote.map((c) => c.id));
+        const localPending = prev.filter((c) => !remoteIdSet.has(c.id) && !deletedRecordIds.has(c.id) && isStrictShopRecord(c));
+        const combined = [...validRemote, ...localPending];
+
+        const seen = new Set<string>();
+        const deduped: Customer[] = [];
+        for (const c of combined) {
+          const phKey = c.phone && c.phone !== 'N/A' && c.phone.trim() ? `ph-${c.phone.trim()}` : '';
+          const nameKey = c.name ? `name-${c.name.trim().toLowerCase()}` : '';
+          const key = phKey || nameKey || c.id;
+          if (!seen.has(c.id) && !seen.has(key)) {
+            seen.add(c.id);
+            seen.add(key);
+            deduped.push(c);
+          }
+        }
+        return deduped;
+      });
+
+      // 3. Fetch Suppliers for active shop code & deduplicate
+      const rawRemoteSuppliers = await fetchShopRows('suppliers', 'vendors');
+      setSuppliers((prev) => {
+        const validRemote = rawRemoteSuppliers
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parseSupplierRow(r, sCode, sName));
+
+        const remoteIdSet = new Set(validRemote.map((s) => s.id));
+        const localPending = prev.filter((s) => !remoteIdSet.has(s.id) && !deletedRecordIds.has(s.id) && isStrictShopRecord(s));
+        const combined = [...validRemote, ...localPending];
+
+        const seen = new Set<string>();
+        const deduped: Supplier[] = [];
+        for (const s of combined) {
+          const phKey = s.phone && s.phone !== 'N/A' && s.phone.trim() ? `ph-${s.phone.trim()}` : '';
+          const nameKey = s.name ? `name-${s.name.trim().toLowerCase()}` : '';
+          const key = phKey || nameKey || s.id;
+          if (!seen.has(s.id) && !seen.has(key)) {
+            seen.add(s.id);
+            seen.add(key);
+            deduped.push(s);
+          }
+        }
+        return deduped;
+      });
+
+      // 4. Fetch Invoices for active shop code & deduplicate
+      const rawRemoteInvoices = await fetchShopRows('invoices', 'sales');
+      setInvoices((prev) => {
+        const validRemote = rawRemoteInvoices
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parseInvoiceRow(r, sCode, sName));
+
+        const remoteIdSet = new Set(validRemote.map((i) => i.id));
+        const localPending = prev.filter((i) => !remoteIdSet.has(i.id) && !deletedRecordIds.has(i.id) && isStrictShopRecord(i));
+        const combined = [...validRemote, ...localPending];
+
+        const seen = new Set<string>();
+        const deduped: Invoice[] = [];
+        for (const i of combined) {
+          const invKey = i.invoiceNo ? `inv-${i.invoiceNo.trim()}` : i.id;
+          if (!seen.has(i.id) && !seen.has(invKey)) {
+            seen.add(i.id);
+            seen.add(invKey);
+            deduped.push(i);
+          }
+        }
+        return deduped;
+      });
+
+      // 5. Fetch Purchases / Stock Purchases (including relational purchase items)
+      let purchaseItemsLookup: Record<string, any[]> = {};
+      try {
+        const { data: rawChildItems } = await supabase.from('purchase_items').select('*');
+        if (rawChildItems && rawChildItems.length > 0) {
+          for (const item of rawChildItems) {
+            const pId = String(item.purchase_id || item.purchaseId || '');
+            if (pId) {
+              if (!purchaseItemsLookup[pId]) purchaseItemsLookup[pId] = [];
+              purchaseItemsLookup[pId].push(item);
             }
           }
-          return deduped;
-        });
-      }
+        }
+      } catch {}
 
-      // 2. Fetch Customers for active shop code & deduplicate with strict shop verification
-      const { data: remoteCustomers } = await supabase.from('customers').select('*').eq('shop_code', sCode);
-      if (remoteCustomers) {
-        setCustomers((prev) => {
-          const validRemote = remoteCustomers
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => {
-              const mapped: Customer = {
-                id: String(r.id),
-                name: r.name || 'Customer',
-                phone: r.phone || '',
-                email: r.email || '',
-                address: r.address || '',
-                panVat: r.pan_vat || r.panVat || '',
-                creditLimit: Number(r.credit_limit ?? r.creditLimit ?? 0),
-                totalPurchases: Number(r.total_purchases ?? r.totalPurchases ?? 0),
-                currentBalance: Number(r.current_balance ?? r.currentBalance ?? 0),
-                advanceBalance: Number(r.advance_balance ?? r.advanceBalance ?? 0),
-                lastPurchaseDate: r.last_purchase_date || r.lastPurchaseDate || '',
-                shopCode: r.shop_code || r.shopCode || sCode,
-                shopName: r.shop_name || r.shopName || sName,
-                createdAt: r.created_at || r.createdAt || new Date().toISOString(),
-              };
-              return mapped;
-            });
+      const rawRemotePurchases = await fetchShopRows('purchases', 'stock_purchases');
+      setPurchases((prev) => {
+        const validRemote = rawRemotePurchases
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parsePurchaseRow(r, sCode, sName, purchaseItemsLookup));
 
-          const remoteIdSet = new Set(validRemote.map((c) => c.id));
-          const localPending = prev.filter((c) => !remoteIdSet.has(c.id) && !deletedRecordIds.has(c.id) && isStrictShopRecord(c));
-          const combined = [...validRemote, ...localPending];
+        const remoteIdSet = new Set(validRemote.map((p) => p.id));
+        const localPending = prev.filter((p) => !remoteIdSet.has(p.id) && !deletedRecordIds.has(p.id) && isStrictShopRecord(p));
+        const combined = [...validRemote, ...localPending];
 
-          const seen = new Set<string>();
-          const deduped: Customer[] = [];
-          for (const c of combined) {
-            const phKey = c.phone && c.phone !== 'N/A' && c.phone.trim() ? `ph-${c.phone.trim()}` : '';
-            const nameKey = c.name ? `name-${c.name.trim().toLowerCase()}` : '';
-            const key = phKey || nameKey || c.id;
-            if (!seen.has(c.id) && !seen.has(key)) {
-              seen.add(c.id);
-              seen.add(key);
-              deduped.push(c);
-            }
+        const seen = new Set<string>();
+        const deduped: StockPurchase[] = [];
+        for (const p of combined) {
+          const purKey = p.purchaseNo ? `pur-${p.purchaseNo.trim()}` : p.id;
+          if (!seen.has(p.id) && !seen.has(purKey)) {
+            seen.add(p.id);
+            seen.add(purKey);
+            deduped.push(p);
           }
-          return deduped;
-        });
-      }
+        }
+        return deduped;
+      });
 
-      // 3. Fetch Suppliers for active shop code & deduplicate with strict shop verification
-      const { data: remoteSuppliers } = await supabase.from('suppliers').select('*').eq('shop_code', sCode);
-      if (remoteSuppliers) {
-        setSuppliers((prev) => {
-          const validRemote = remoteSuppliers
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => {
-              const mapped: Supplier = {
-                id: String(r.id),
-                name: r.name || 'Supplier',
-                companyName: r.company_name || r.companyName || '',
-                phone: r.phone || '',
-                email: r.email || '',
-                address: r.address || '',
-                panVat: r.pan_vat || r.panVat || '',
-                totalPurchased: Number(r.total_purchased ?? r.totalPurchased ?? 0),
-                pendingPayable: Number(r.pending_payable ?? r.pendingPayable ?? 0),
-                advanceBalance: Number(r.advance_balance ?? r.advanceBalance ?? 0),
-                shopCode: r.shop_code || r.shopCode || sCode,
-                shopName: r.shop_name || r.shopName || sName,
-                createdAt: r.created_at || r.createdAt || new Date().toISOString(),
-              };
-              return mapped;
-            });
+      // 6. Fetch Expenses for active shop code & deduplicate
+      const rawRemoteExpenses = await fetchShopRows('expenses', 'shop_expenses');
+      setExpenses((prev) => {
+        const validRemote = rawRemoteExpenses
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parseExpenseRow(r, sCode, sName));
 
-          const remoteIdSet = new Set(validRemote.map((s) => s.id));
-          const localPending = prev.filter((s) => !remoteIdSet.has(s.id) && !deletedRecordIds.has(s.id) && isStrictShopRecord(s));
-          const combined = [...validRemote, ...localPending];
+        const remoteIdSet = new Set(validRemote.map((e) => e.id));
+        const localPending = prev.filter((e) => !remoteIdSet.has(e.id) && !deletedRecordIds.has(e.id) && isStrictShopRecord(e));
+        const combined = [...validRemote, ...localPending];
 
-          const seen = new Set<string>();
-          const deduped: Supplier[] = [];
-          for (const s of combined) {
-            const phKey = s.phone && s.phone !== 'N/A' && s.phone.trim() ? `ph-${s.phone.trim()}` : '';
-            const nameKey = s.name ? `name-${s.name.trim().toLowerCase()}` : '';
-            const key = phKey || nameKey || s.id;
-            if (!seen.has(s.id) && !seen.has(key)) {
-              seen.add(s.id);
-              seen.add(key);
-              deduped.push(s);
-            }
+        const seen = new Set<string>();
+        const deduped: Expense[] = [];
+        for (const e of combined) {
+          const expKey = e.expenseNo ? `exp-${e.expenseNo.trim()}` : e.id;
+          if (!seen.has(e.id) && !seen.has(expKey)) {
+            seen.add(e.id);
+            seen.add(expKey);
+            deduped.push(e);
           }
-          return deduped;
-        });
-      }
+        }
+        return deduped;
+      });
 
-      // 4. Fetch Invoices for active shop code & deduplicate with strict shop verification
-      let { data: remoteInvoices } = await supabase.from('invoices').select('*').eq('shop_code', sCode);
-      if (!remoteInvoices || remoteInvoices.length === 0) {
-        const { data: altInv } = await supabase.from('sales').select('*').eq('shop_code', sCode);
-        if (altInv && altInv.length > 0) remoteInvoices = altInv;
-      }
-      if (remoteInvoices) {
-        setInvoices((prev) => {
-          const validRemote = remoteInvoices
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => {
-              const mapped: Invoice = {
-                id: String(r.id),
-                invoiceNo: r.invoice_no || r.invoiceNo || `INV-${r.id}`,
-                customerId: r.customer_id || r.customerId || '',
-                customerName: r.customer_name || r.customerName || 'Walk-in Customer',
-                customerPhone: r.customer_phone || r.customerPhone || '',
-                items: r.items || [],
-                subtotal: Number(r.subtotal || 0),
-                discount: Number(r.discount || 0),
-                taxAmount: Number(r.tax_amount ?? r.taxAmount ?? 0),
-                netAmount: Number(r.net_amount ?? r.netAmount ?? 0),
-                splitPayment: r.split_payment || r.splitPayment || { cash: 0, bank: 0, esewa: 0, credit: 0 },
-                paymentStatus: r.payment_status || r.paymentStatus || 'PAID',
-                cashierName: r.cashier_name || r.cashierName || 'POS User',
-                shopCode: r.shop_code || r.shopCode || sCode,
-                shopName: r.shop_name || r.shopName || sName,
-                createdAt: r.created_at || r.createdAt || new Date().toISOString(),
-              };
-              return mapped;
-            });
+      // 7. Fetch Khata Transactions for active shop code & deduplicate
+      const rawRemoteKhata = await fetchShopRows('khata_transactions', 'udharo_khata');
+      setKhataTransactions((prev) => {
+        const validRemote = rawRemoteKhata
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parseKhataRow(r, sCode, sName));
 
-          const remoteIdSet = new Set(validRemote.map((i) => i.id));
-          const localPending = prev.filter((i) => !remoteIdSet.has(i.id) && !deletedRecordIds.has(i.id) && isStrictShopRecord(i));
-          const combined = [...validRemote, ...localPending];
+        const remoteIdSet = new Set(validRemote.map((k) => k.id));
+        const localPending = prev.filter((k) => !remoteIdSet.has(k.id) && !deletedRecordIds.has(k.id) && isStrictShopRecord(k));
+        const combined = [...validRemote, ...localPending];
 
-          const seen = new Set<string>();
-          const deduped: Invoice[] = [];
-          for (const i of combined) {
-            const invKey = i.invoiceNo ? `inv-${i.invoiceNo.trim()}` : i.id;
-            if (!seen.has(i.id) && !seen.has(invKey)) {
-              seen.add(i.id);
-              seen.add(invKey);
-              deduped.push(i);
-            }
+        const seen = new Set<string>();
+        const deduped: KhataTransaction[] = [];
+        for (const k of combined) {
+          if (!seen.has(k.id)) {
+            seen.add(k.id);
+            deduped.push(k);
           }
-          return deduped;
-        });
-      }
+        }
+        return deduped;
+      });
 
-      // 5. Fetch Purchases for active shop code & deduplicate with strict shop verification
-      let { data: remotePurchases } = await supabase.from('purchases').select('*').eq('shop_code', sCode);
-      if (!remotePurchases || remotePurchases.length === 0) {
-        const { data: altPur } = await supabase.from('stock_purchases').select('*').eq('shop_code', sCode);
-        if (altPur && altPur.length > 0) remotePurchases = altPur;
-      }
-      if (remotePurchases) {
-        setPurchases((prev) => {
-          const validRemote = remotePurchases
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => {
-              const mapped: StockPurchase = {
-                id: String(r.id),
-                purchaseNo: r.purchase_no || r.purchaseNo || `PUR-${r.id}`,
-                supplierId: r.supplier_id || r.supplierId || '',
-                supplierName: r.supplier_name || r.supplierName || '',
-                invoiceRef: r.invoice_ref || r.invoiceRef || '',
-                items: r.items || [],
-                totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
-                cashPaid: Number(r.cash_paid ?? r.cashPaid ?? 0),
-                supplierCredit: Number(r.supplier_credit ?? r.supplierCredit ?? 0),
-                purchaseDate: r.purchase_date || r.purchaseDate || r.created_at || new Date().toISOString(),
-                notes: r.notes || '',
-                performedBy: r.performed_by || r.performedBy || '',
-                shopCode: r.shop_code || r.shopCode || sCode,
-                shopName: r.shop_name || r.shopName || sName,
-              };
-              return mapped;
-            });
-
-          const remoteIdSet = new Set(validRemote.map((p) => p.id));
-          const localPending = prev.filter((p) => !remoteIdSet.has(p.id) && !deletedRecordIds.has(p.id) && isStrictShopRecord(p));
-          const combined = [...validRemote, ...localPending];
-
-          const seen = new Set<string>();
-          const deduped: StockPurchase[] = [];
-          for (const p of combined) {
-            const purKey = p.purchaseNo ? `pur-${p.purchaseNo.trim()}` : p.id;
-            if (!seen.has(p.id) && !seen.has(purKey)) {
-              seen.add(p.id);
-              seen.add(purKey);
-              deduped.push(p);
-            }
+      // 8. Fetch Sales Returns for active shop code
+      const rawRemoteSR = await fetchShopRows('sales_returns');
+      setSalesReturns((prev) => {
+        const validRemote = rawRemoteSR
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parseSalesReturnRow(r, sCode, sName));
+        const remoteIdSet = new Set(validRemote.map((s) => s.id));
+        const localPending = prev.filter((s) => !remoteIdSet.has(s.id) && !deletedRecordIds.has(s.id) && isStrictShopRecord(s));
+        const combined = [...validRemote, ...localPending];
+        const seen = new Set<string>();
+        const deduped: SalesReturn[] = [];
+        for (const sr of combined) {
+          const key = sr.returnNo ? `sr-${sr.returnNo}` : sr.id;
+          if (!seen.has(sr.id) && !seen.has(key)) {
+            seen.add(sr.id);
+            seen.add(key);
+            deduped.push(sr);
           }
-          return deduped;
-        });
-      }
+        }
+        return deduped;
+      });
 
-      // 6. Fetch Expenses for active shop code & deduplicate with strict shop verification
-      let { data: remoteExpenses } = await supabase.from('expenses').select('*').eq('shop_code', sCode);
-      if (!remoteExpenses || remoteExpenses.length === 0) {
-        const { data: altExp } = await supabase.from('shop_expenses').select('*').eq('shop_code', sCode);
-        if (altExp && altExp.length > 0) remoteExpenses = altExp;
-      }
-      if (remoteExpenses) {
-        setExpenses((prev) => {
-          const validRemote = remoteExpenses
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => {
-              const mapped: Expense = {
-                id: String(r.id),
-                expenseNo: r.expense_no || r.expenseNo || `EXP-${r.id}`,
-                category: r.category || 'General',
-                title: r.title || 'Expense',
-                amount: Number(r.amount || 0),
-                paymentMethod: r.payment_method || r.paymentMethod || 'CASH',
-                paidTo: r.paid_to || r.paidTo || '',
-                notes: r.notes || '',
-                expenseDate: r.expense_date || r.expenseDate || r.created_at || new Date().toISOString(),
-                shopCode: r.shop_code || r.shopCode || sCode,
-                shopName: r.shop_name || r.shopName || sName,
-                createdAt: r.created_at || r.createdAt || new Date().toISOString(),
-              };
-              return mapped;
-            });
-
-          const remoteIdSet = new Set(validRemote.map((e) => e.id));
-          const localPending = prev.filter((e) => !remoteIdSet.has(e.id) && !deletedRecordIds.has(e.id) && isStrictShopRecord(e));
-          const combined = [...validRemote, ...localPending];
-
-          const seen = new Set<string>();
-          const deduped: Expense[] = [];
-          for (const e of combined) {
-            const expKey = e.expenseNo ? `exp-${e.expenseNo.trim()}` : e.id;
-            if (!seen.has(e.id) && !seen.has(expKey)) {
-              seen.add(e.id);
-              seen.add(expKey);
-              deduped.push(e);
-            }
+      // 9. Fetch Purchase Returns for active shop code
+      const rawRemotePR = await fetchShopRows('purchase_returns');
+      setPurchaseReturns((prev) => {
+        const validRemote = rawRemotePR
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parsePurchaseReturnRow(r, sCode, sName));
+        const remoteIdSet = new Set(validRemote.map((p) => p.id));
+        const localPending = prev.filter((p) => !remoteIdSet.has(p.id) && !deletedRecordIds.has(p.id) && isStrictShopRecord(p));
+        const combined = [...validRemote, ...localPending];
+        const seen = new Set<string>();
+        const deduped: PurchaseReturn[] = [];
+        for (const pr of combined) {
+          const key = pr.returnNo ? `pr-${pr.returnNo}` : pr.id;
+          if (!seen.has(pr.id) && !seen.has(key)) {
+            seen.add(pr.id);
+            seen.add(key);
+            deduped.push(pr);
           }
-          return deduped;
-        });
-      }
+        }
+        return deduped;
+      });
 
-      // 7. Fetch Khata Transactions for active shop code & deduplicate with strict shop verification
-      let { data: remoteKhata } = await supabase.from('khata_transactions').select('*').eq('shop_code', sCode);
-      if (!remoteKhata || remoteKhata.length === 0) {
-        const { data: altKhata } = await supabase.from('udharo_khata').select('*').eq('shop_code', sCode);
-        if (altKhata && altKhata.length > 0) remoteKhata = altKhata;
-      }
-      if (remoteKhata) {
-        setKhataTransactions((prev) => {
-          const validRemote = remoteKhata
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => {
-              const mapped: KhataTransaction = {
-                id: String(r.id),
-                entityType: r.entity_type || r.entityType || 'CUSTOMER',
-                entityId: r.entity_id || r.entityId || '',
-                entityName: r.entity_name || r.entityName || '',
-                type: r.type || 'CREDIT_GIVEN',
-                amount: Number(r.amount || 0),
-                paymentMethod: r.payment_method || r.paymentMethod || 'CASH',
-                referenceInvoiceId: r.reference_invoice_id || r.referenceInvoiceId || '',
-                note: r.note || '',
-                createdAt: r.created_at || r.createdAt || new Date().toISOString(),
-                balanceAfter: Number(r.balance_after ?? r.balanceAfter ?? 0),
-                performedBy: r.performed_by || r.performedBy || '',
-                shopCode: r.shop_code || r.shopCode || sCode,
-                shopName: r.shop_name || r.shopName || sName,
-              };
-              return mapped;
-            });
-
-          const remoteIdSet = new Set(validRemote.map((k) => k.id));
-          const localPending = prev.filter((k) => !remoteIdSet.has(k.id) && !deletedRecordIds.has(k.id) && isStrictShopRecord(k));
-          const combined = [...validRemote, ...localPending];
-
-          const seen = new Set<string>();
-          const deduped: KhataTransaction[] = [];
-          for (const k of combined) {
-            if (!seen.has(k.id)) {
-              seen.add(k.id);
-              deduped.push(k);
-            }
+      // 10. Fetch Supplier Advance Payments for active shop code
+      const rawRemoteSA = await fetchShopRows('supplier_advance_payments');
+      setSupplierAdvancePayments((prev) => {
+        const validRemote = rawRemoteSA
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+          .map((r: any) => parseSupplierAdvanceRow(r, sCode, sName));
+        const remoteIdSet = new Set(validRemote.map((s) => s.id));
+        const localPending = prev.filter((s) => !remoteIdSet.has(s.id) && !deletedRecordIds.has(s.id) && isStrictShopRecord(s));
+        const combined = [...validRemote, ...localPending];
+        const seen = new Set<string>();
+        const deduped: SupplierAdvancePayment[] = [];
+        for (const sa of combined) {
+          if (!seen.has(sa.id)) {
+            seen.add(sa.id);
+            deduped.push(sa);
           }
-          return deduped;
-        });
-      }
-
-      // 8. Fetch Sales Returns for active shop code with strict shop verification
-      const { data: remoteSR } = await supabase.from('sales_returns').select('*').eq('shop_code', sCode);
-      if (remoteSR) {
-        setSalesReturns((prev) => {
-          const validRemote = remoteSR
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => ({
-              id: String(r.id),
-              returnNo: r.return_no || r.returnNo || `SR-${r.id}`,
-              invoiceId: r.invoice_id || r.invoiceId || '',
-              invoiceNo: r.invoice_no || r.invoiceNo || '',
-              customerId: r.customer_id || r.customerId || '',
-              customerName: r.customer_name || r.customerName || '',
-              items: r.items || [],
-              totalRefundAmount: Number(r.total_refund_amount ?? r.totalRefundAmount ?? 0),
-              refundMethod: r.refund_method || r.refundMethod || 'CASH',
-              reason: r.reason || '',
-              returnDate: r.return_date || r.returnDate || r.created_at || new Date().toISOString(),
-              recordedBy: r.recorded_by || r.recordedBy || '',
-              shopCode: r.shop_code || r.shopCode || sCode,
-              shopName: r.shop_name || r.shopName || sName,
-            }));
-          const remoteIdSet = new Set(validRemote.map((s) => s.id));
-          const localPending = prev.filter((s) => !remoteIdSet.has(s.id) && !deletedRecordIds.has(s.id) && isStrictShopRecord(s));
-          const combined = [...validRemote, ...localPending];
-          const seen = new Set<string>();
-          const deduped: SalesReturn[] = [];
-          for (const sr of combined) {
-            const key = sr.returnNo ? `sr-${sr.returnNo}` : sr.id;
-            if (!seen.has(sr.id) && !seen.has(key)) {
-              seen.add(sr.id);
-              seen.add(key);
-              deduped.push(sr);
-            }
-          }
-          return deduped;
-        });
-      }
-
-      // 9. Fetch Purchase Returns for active shop code with strict shop verification
-      const { data: remotePR } = await supabase.from('purchase_returns').select('*').eq('shop_code', sCode);
-      if (remotePR) {
-        setPurchaseReturns((prev) => {
-          const validRemote = remotePR
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => ({
-              id: String(r.id),
-              returnNo: r.return_no || r.returnNo || `PR-${r.id}`,
-              purchaseId: r.purchase_id || r.purchaseId || '',
-              purchaseNo: r.purchase_no || r.purchaseNo || '',
-              supplierId: r.supplier_id || r.supplierId || '',
-              supplierName: r.supplier_name || r.supplierName || '',
-              items: r.items || [],
-              totalRefundAmount: Number(r.total_refund_amount ?? r.totalRefundAmount ?? 0),
-              refundMethod: r.refund_method || r.refundMethod || 'CASH',
-              reason: r.reason || '',
-              returnDate: r.return_date || r.returnDate || r.created_at || new Date().toISOString(),
-              recordedBy: r.recorded_by || r.recordedBy || '',
-              shopCode: r.shop_code || r.shopCode || sCode,
-              shopName: r.shop_name || r.shopName || sName,
-            }));
-          const remoteIdSet = new Set(validRemote.map((p) => p.id));
-          const localPending = prev.filter((p) => !remoteIdSet.has(p.id) && !deletedRecordIds.has(p.id) && isStrictShopRecord(p));
-          const combined = [...validRemote, ...localPending];
-          const seen = new Set<string>();
-          const deduped: PurchaseReturn[] = [];
-          for (const pr of combined) {
-            const key = pr.returnNo ? `pr-${pr.returnNo}` : pr.id;
-            if (!seen.has(pr.id) && !seen.has(key)) {
-              seen.add(pr.id);
-              seen.add(key);
-              deduped.push(pr);
-            }
-          }
-          return deduped;
-        });
-      }
-
-      // 10. Fetch Supplier Advance Payments for active shop code with strict shop verification
-      const { data: remoteSA } = await supabase.from('supplier_advance_payments').select('*').eq('shop_code', sCode);
-      if (remoteSA) {
-        setSupplierAdvancePayments((prev) => {
-          const validRemote = remoteSA
-            .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
-            .map((r: any) => ({
-              id: String(r.id),
-              supplierId: r.supplier_id || r.supplierId || '',
-              supplierName: r.supplier_name || r.supplierName || '',
-              amount: Number(r.amount || 0),
-              paymentMethod: r.payment_method || r.paymentMethod || 'CASH',
-              paymentDate: r.payment_date || r.paymentDate || r.created_at || new Date().toISOString(),
-              notes: r.notes || '',
-              recordedBy: r.recorded_by || r.recordedBy || '',
-              shopCode: r.shop_code || r.shopCode || sCode,
-              shopName: r.shop_name || r.shopName || sName,
-              createdAt: r.created_at || r.createdAt || new Date().toISOString(),
-            }));
-          const remoteIdSet = new Set(validRemote.map((s) => s.id));
-          const localPending = prev.filter((s) => !remoteIdSet.has(s.id) && !deletedRecordIds.has(s.id) && isStrictShopRecord(s));
-          const combined = [...validRemote, ...localPending];
-          const seen = new Set<string>();
-          const deduped: SupplierAdvancePayment[] = [];
-          for (const sa of combined) {
-            if (!seen.has(sa.id)) {
-              seen.add(sa.id);
-              deduped.push(sa);
-            }
-          }
-          return deduped;
-        });
-      }
+        }
+        return deduped;
+      });
 
       // 11. Fetch Shop Profile for active shop code
       const { data: remoteProfile } = await supabase.from('shop_profiles').select('*').eq('shop_code', sCode).maybeSingle();
@@ -3321,6 +3591,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           invoiceHeaderNote: remoteProfile.invoice_header_note || prev.invoiceHeaderNote,
           invoiceFooterNote: remoteProfile.invoice_footer_note || prev.invoiceFooterNote,
         }));
+      }
+
+      // 12. Backup Snapshot Extraction Fallback if store has no products/suppliers/purchases
+      try {
+        const { data: snapshots } = await supabase.from('store_snapshots').select('*').eq('shop_code', sCode);
+        if (snapshots && snapshots.length > 0) {
+          const matchedSnap = snapshots.find((snap: any) => isStrictShopRecord(snap));
+          if (matchedSnap) {
+            if (matchedSnap.suppliers && Array.isArray(matchedSnap.suppliers) && matchedSnap.suppliers.length > 0) {
+              setSuppliers((prev) => {
+                if (prev.length === 0) {
+                  return matchedSnap.suppliers.map((s: any) => parseSupplierRow(s, sCode, sName));
+                }
+                return prev;
+              });
+            }
+            if (matchedSnap.products && Array.isArray(matchedSnap.products) && matchedSnap.products.length > 0) {
+              setProducts((prev) => {
+                if (prev.length === 0) {
+                  return matchedSnap.products.map((p: any) => parseProductRow(p, sCode, sName));
+                }
+                return prev;
+              });
+            }
+            if (matchedSnap.customers && Array.isArray(matchedSnap.customers) && matchedSnap.customers.length > 0) {
+              setCustomers((prev) => {
+                if (prev.length === 0) {
+                  return matchedSnap.customers.map((c: any) => parseCustomerRow(c, sCode, sName));
+                }
+                return prev;
+              });
+            }
+            if (matchedSnap.stock_purchases && Array.isArray(matchedSnap.stock_purchases) && matchedSnap.stock_purchases.length > 0) {
+              setPurchases((prev) => {
+                if (prev.length === 0) {
+                  return matchedSnap.stock_purchases.map((pur: any) => parsePurchaseRow(pur, sCode, sName));
+                }
+                return prev;
+              });
+            }
+            if (matchedSnap.sales_invoices && Array.isArray(matchedSnap.sales_invoices) && matchedSnap.sales_invoices.length > 0) {
+              setInvoices((prev) => {
+                if (prev.length === 0) {
+                  return matchedSnap.sales_invoices.map((inv: any) => parseInvoiceRow(inv, sCode, sName));
+                }
+                return prev;
+              });
+            }
+          }
+        }
+      } catch (snapErr) {
+        // quiet catch
       }
 
       // Reconcile product stock against transaction history
@@ -3445,21 +3767,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const recordId = (newRecord as any)?.id || (oldRecord as any)?.id;
           if (!recordId) return;
 
-          const recShopCode = (newRecord as any)?.shop_code || (oldRecord as any)?.shop_code || (newRecord as any)?.shopCode || (oldRecord as any)?.shopCode;
-          const recShopName = (newRecord as any)?.shop_name || (oldRecord as any)?.shop_name || (newRecord as any)?.shopName || (oldRecord as any)?.shopName;
           const activeShopCode = (activeStoreUser?.shopCode || currentUser?.shopCode || shopProfile?.shopCode || '').trim();
           const activeShopName = (activeStoreUser?.shopName || currentUser?.shopName || shopProfile?.shopName || '').trim();
+          const activeUserId = activeStoreUser?.id || currentUser?.id;
 
-          if (recShopCode && activeShopCode && recShopCode.trim().toUpperCase() !== activeShopCode.toUpperCase()) {
-            return; // Strict filter: Ignore events from other shop codes
-          }
-          if (recShopName && activeShopName && recShopName.trim().toLowerCase() !== activeShopName.toLowerCase()) {
-            return; // Strict filter: Ignore events from other shop names
-          }
-          if (recShopCode && recShopName && activeShopCode && activeShopName) {
-            if (recShopCode.trim().toUpperCase() !== activeShopCode.toUpperCase() || recShopName.trim().toLowerCase() !== activeShopName.toLowerCase()) {
-              return; // Strict dual verification
-            }
+          if (!isShopMatchRecord(newRecord || oldRecord, activeShopCode, activeShopName, activeUserId)) {
+            return;
           }
 
           if (eventType === 'DELETE') {
@@ -3476,13 +3789,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setProducts((prev) => prev.filter((p) => p.id !== recordId));
             } else if (table === 'customers') {
               setCustomers((prev) => prev.filter((c) => c.id !== recordId));
-            } else if (table === 'suppliers') {
+            } else if (table === 'suppliers' || table === 'vendors') {
               setSuppliers((prev) => prev.filter((s) => s.id !== recordId));
             } else if (table === 'invoices' || table === 'sales') {
               setInvoices((prev) => prev.filter((i) => i.id !== recordId));
             } else if (table === 'purchases' || table === 'stock_purchases') {
               setPurchases((prev) => prev.filter((p) => p.id !== recordId));
-            } else if (table === 'expenses') {
+            } else if (table === 'expenses' || table === 'shop_expenses') {
               setExpenses((prev) => prev.filter((e) => e.id !== recordId));
             } else if (table === 'audit_logs') {
               setAuditLogs((prev) => prev.filter((l) => l.id !== recordId));
@@ -3492,28 +3805,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (deletedRecordIds.has(recordId)) return;
 
             if (table === 'products') {
-              const rId = String(newRecord.id);
-              const rBarcode = (newRecord.barcode || '').trim();
-              const rSku = (newRecord.sku || '').trim().toLowerCase();
-              const rName = (newRecord.name || '').trim().toLowerCase();
-
-              const mapped: Product = {
-                id: rId,
-                sku: newRecord.sku || '',
-                barcode: newRecord.barcode || '',
-                cartonBarcode: newRecord.carton_barcode || newRecord.cartonBarcode || '',
-                name: newRecord.name,
-                category: newRecord.category || 'General',
-                stockQty: Number(newRecord.stock_qty ?? newRecord.stockQty ?? 0),
-                minStockAlert: Number(newRecord.min_stock_alert ?? newRecord.minStockAlert ?? 5),
-                unit: newRecord.unit || { buyUnit: 'Pcs', sellUnit: 'Pcs', conversionFactor: 1 },
-                supplierId: newRecord.supplier_id || newRecord.supplierId || '',
-                supplierName: newRecord.supplier_name || newRecord.supplierName || '',
-                shopCode: newRecord.shop_code || newRecord.shopCode || activeShopCode,
-                shopName: newRecord.shop_name || newRecord.shopName || activeShopName,
-                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
-                updatedAt: newRecord.updated_at || newRecord.updatedAt || new Date().toISOString(),
-              };
+              const mapped = parseProductRow(newRecord, activeShopCode, activeShopName);
+              const rId = mapped.id;
+              const rBarcode = (mapped.barcode || '').trim();
+              const rSku = (mapped.sku || '').trim().toLowerCase();
+              const rName = (mapped.name || '').trim().toLowerCase();
 
               setProducts((prev) => {
                 const idx = prev.findIndex((p) => {
@@ -3533,23 +3829,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 }
               });
             } else if (table === 'customers') {
-              const rId = String(newRecord.id);
-              const mapped: Customer = {
-                id: rId,
-                name: newRecord.name,
-                phone: newRecord.phone || '',
-                email: newRecord.email || '',
-                address: newRecord.address || '',
-                panVat: newRecord.pan_vat || newRecord.panVat || '',
-                creditLimit: Number(newRecord.credit_limit ?? newRecord.creditLimit ?? 0),
-                totalPurchases: Number(newRecord.total_purchases ?? newRecord.totalPurchases ?? 0),
-                currentBalance: Number(newRecord.current_balance ?? newRecord.currentBalance ?? 0),
-                advanceBalance: Number(newRecord.advance_balance ?? newRecord.advanceBalance ?? 0),
-                lastPurchaseDate: newRecord.last_purchase_date || newRecord.lastPurchaseDate || '',
-                shopCode: newRecord.shop_code || newRecord.shopCode || activeShopCode,
-                shopName: newRecord.shop_name || newRecord.shopName || activeShopName,
-                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
-              };
+              const mapped = parseCustomerRow(newRecord, activeShopCode, activeShopName);
+              const rId = mapped.id;
 
               setCustomers((prev) => {
                 const idx = prev.findIndex((c) => c.id === rId || toValidUuid(c.id) === rId || c.id === toValidUuid(rId));
@@ -3561,23 +3842,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   return [mapped, ...prev];
                 }
               });
-            } else if (table === 'suppliers') {
-              const rId = String(newRecord.id);
-              const mapped: Supplier = {
-                id: rId,
-                name: newRecord.name,
-                companyName: newRecord.company_name || newRecord.companyName || '',
-                phone: newRecord.phone || '',
-                email: newRecord.email || '',
-                address: newRecord.address || '',
-                panVat: newRecord.pan_vat || newRecord.panVat || '',
-                totalPurchased: Number(newRecord.total_purchased ?? newRecord.totalPurchased ?? 0),
-                pendingPayable: Number(newRecord.pending_payable ?? newRecord.pendingPayable ?? 0),
-                advanceBalance: Number(newRecord.advance_balance ?? newRecord.advanceBalance ?? 0),
-                shopCode: newRecord.shop_code || newRecord.shopCode || activeShopCode,
-                shopName: newRecord.shop_name || newRecord.shopName || activeShopName,
-                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
-              };
+            } else if (table === 'suppliers' || table === 'vendors') {
+              const mapped = parseSupplierRow(newRecord, activeShopCode, activeShopName);
+              const rId = mapped.id;
 
               setSuppliers((prev) => {
                 const idx = prev.findIndex((s) => s.id === rId || toValidUuid(s.id) === rId || s.id === toValidUuid(rId));
@@ -3590,25 +3857,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 }
               });
             } else if (table === 'invoices' || table === 'sales') {
-              const rId = String(newRecord.id);
-              const mapped: Invoice = {
-                id: rId,
-                invoiceNo: newRecord.invoice_no || newRecord.invoiceNo,
-                customerId: newRecord.customer_id || newRecord.customerId || '',
-                customerName: newRecord.customer_name || newRecord.customerName || 'Walk-in Customer',
-                customerPhone: newRecord.customer_phone || newRecord.customerPhone || '',
-                items: newRecord.items || [],
-                subtotal: Number(newRecord.subtotal || 0),
-                discount: Number(newRecord.discount || 0),
-                taxAmount: Number(newRecord.tax_amount ?? newRecord.taxAmount ?? 0),
-                netAmount: Number(newRecord.net_amount ?? newRecord.netAmount ?? 0),
-                splitPayment: newRecord.split_payment || newRecord.splitPayment || { cash: 0, bank: 0, esewa: 0, credit: 0 },
-                paymentStatus: newRecord.payment_status || newRecord.paymentStatus || 'PAID',
-                cashierName: newRecord.cashier_name || newRecord.cashierName || 'POS User',
-                shopCode: newRecord.shop_code || newRecord.shopCode || activeShopCode,
-                shopName: newRecord.shop_name || newRecord.shopName || activeShopName,
-                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
-              };
+              const mapped = parseInvoiceRow(newRecord, activeShopCode, activeShopName);
+              const rId = mapped.id;
 
               setInvoices((prev) => {
                 const idx = prev.findIndex((i) => i.id === rId || i.invoiceNo === mapped.invoiceNo);
@@ -3621,23 +3871,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 }
               });
             } else if (table === 'purchases' || table === 'stock_purchases') {
-              const rId = String(newRecord.id);
-              const mapped: StockPurchase = {
-                id: rId,
-                purchaseNo: newRecord.purchase_no || newRecord.purchaseNo,
-                supplierId: newRecord.supplier_id || newRecord.supplierId || '',
-                supplierName: newRecord.supplier_name || newRecord.supplierName || '',
-                invoiceRef: newRecord.invoice_ref || newRecord.invoiceRef || '',
-                items: newRecord.items || [],
-                totalAmount: Number(newRecord.total_amount ?? newRecord.totalAmount ?? 0),
-                cashPaid: Number(newRecord.cash_paid ?? newRecord.cashPaid ?? 0),
-                supplierCredit: Number(newRecord.supplier_credit ?? newRecord.supplierCredit ?? 0),
-                purchaseDate: newRecord.purchase_date || newRecord.purchaseDate || newRecord.created_at,
-                notes: newRecord.notes || '',
-                performedBy: newRecord.performed_by || newRecord.performedBy || '',
-                shopCode: newRecord.shop_code || newRecord.shopCode || activeShopCode,
-                shopName: newRecord.shop_name || newRecord.shopName || activeShopName,
-              };
+              const mapped = parsePurchaseRow(newRecord, activeShopCode, activeShopName);
+              const rId = mapped.id;
 
               setPurchases((prev) => {
                 const idx = prev.findIndex((p) => p.id === rId || p.purchaseNo === mapped.purchaseNo);
@@ -3649,22 +3884,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   return [mapped, ...prev];
                 }
               });
-            } else if (table === 'expenses') {
-              const rId = String(newRecord.id);
-              const mapped: Expense = {
-                id: rId,
-                expenseNo: newRecord.expense_no || newRecord.expenseNo,
-                category: newRecord.category || 'General',
-                title: newRecord.title || 'Expense',
-                amount: Number(newRecord.amount || 0),
-                paymentMethod: newRecord.payment_method || newRecord.paymentMethod || 'CASH',
-                paidTo: newRecord.paid_to || newRecord.paidTo || '',
-                notes: newRecord.notes || '',
-                expenseDate: newRecord.expense_date || newRecord.expenseDate || newRecord.created_at,
-                shopCode: newRecord.shop_code || newRecord.shopCode || activeShopCode,
-                shopName: newRecord.shop_name || newRecord.shopName || activeShopName,
-                createdAt: newRecord.created_at || newRecord.createdAt || new Date().toISOString(),
-              };
+            } else if (table === 'expenses' || table === 'shop_expenses') {
+              const mapped = parseExpenseRow(newRecord, activeShopCode, activeShopName);
+              const rId = mapped.id;
+
+              setExpenses((prev) => {
+                const idx = prev.findIndex((e) => e.id === rId || e.expenseNo === mapped.expenseNo);
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = { ...mapped, id: prev[idx].id };
+                  return updated;
+                } else {
+                  return [mapped, ...prev];
+                }
+              });
 
               setExpenses((prev) => {
                 const idx = prev.findIndex((e) => e.id === rId || e.expenseNo === mapped.expenseNo);
@@ -4234,6 +4467,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // POS Cart management
   const addToCart = (product: Product, quantity = 1, selectedUnit: 'PRIMARY' | 'SECONDARY' = 'PRIMARY') => {
+    if (Number(product.stockQty || 0) <= 0) {
+      console.warn(`Cannot add out-of-stock product "${product.name}" to cart.`);
+      return;
+    }
+
     const unitName =
       selectedUnit === 'SECONDARY' && product.unit.secondaryUnit
         ? product.unit.secondaryUnit
@@ -4469,6 +4707,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           note: `Udharo on Invoice ${invoiceNo}`,
           createdAt: new Date().toISOString(),
           balanceAfter: (customerObj?.currentBalance || 0) + udharoAmount,
+          shopCode,
+          shopName,
         };
         setKhataTransactions((prev) => [newKhata, ...prev]);
       }
@@ -4485,6 +4725,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           note: `Advance Deposit overpayment on Invoice ${invoiceNo}`,
           createdAt: new Date().toISOString(),
           balanceAfter: customerObj?.currentBalance || 0,
+          shopCode,
+          shopName,
         };
         setKhataTransactions((prev) => [newKhata, ...prev]);
       }
