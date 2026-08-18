@@ -264,6 +264,21 @@ export const TransactionHistory: React.FC = () => {
           timestamp: tx.createdAt,
           details: `Added to Udharo Ledger ${tx.note ? `(${tx.note})` : ''}`,
           performedBy: tx.performedBy || 'Store Owner',
+          referenceNo: tx.referenceInvoiceId || '',
+        });
+      } else if (tx.entityType === 'SUPPLIER' && tx.type === 'DEBT_ADDED') {
+        list.push({
+          id: `act-kt-${tx.id}`,
+          type: 'SUPPLIER_DEBT',
+          title: 'Supplier Udharo (Credit Inflow)',
+          partyName: tx.entityName,
+          partyType: 'SUPPLIER',
+          amount: tx.amount,
+          isPositive: false,
+          timestamp: tx.createdAt,
+          details: `Udharo Purchase Credit from Supplier • ${tx.note || 'Goods received on credit'}`,
+          performedBy: tx.performedBy || 'Store Owner',
+          referenceNo: tx.referenceInvoiceId || '',
         });
       }
     });
@@ -717,7 +732,31 @@ export const TransactionHistory: React.FC = () => {
                   }`}
                 >
                   <Truck className="h-3.5 w-3.5" />
-                  <span>Goods Buyed</span>
+                  <span>Stock Purchases</span>
+                </button>
+
+                <button
+                  onClick={() => setActivityFilter('SUPPLIER_DEBT')}
+                  className={`flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                    activityFilter === 'SUPPLIER_DEBT'
+                      ? 'bg-amber-600 text-white dark:bg-amber-500'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                  }`}
+                >
+                  <Building2 className="h-3.5 w-3.5" />
+                  <span>Supplier Udharo</span>
+                </button>
+
+                <button
+                  onClick={() => setActivityFilter('CUSTOMER_CREDIT')}
+                  className={`flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                    activityFilter === 'CUSTOMER_CREDIT'
+                      ? 'bg-orange-600 text-white dark:bg-orange-500'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'
+                  }`}
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                  <span>Customer Udharo</span>
                 </button>
 
                 <button

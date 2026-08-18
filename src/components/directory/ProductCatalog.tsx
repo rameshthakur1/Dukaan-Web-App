@@ -40,13 +40,13 @@ export const ProductCatalog: React.FC = () => {
 
   // Unit pricing
   const [primaryUnit, setPrimaryUnit] = useState('Packet');
-  const [primaryCostPrice, setPrimaryCostPrice] = useState<number>(0);
-  const [primarySellingPrice, setPrimarySellingPrice] = useState<number>(0);
+  const [primaryCostPrice, setPrimaryCostPrice] = useState<number | ''>(0);
+  const [primarySellingPrice, setPrimarySellingPrice] = useState<number | ''>(0);
 
   const [secondaryUnit, setSecondaryUnit] = useState('');
-  const [conversionRatio, setConversionRatio] = useState<number>(12);
-  const [secondaryCostPrice, setSecondaryCostPrice] = useState<number>(0);
-  const [secondarySellingPrice, setSecondarySellingPrice] = useState<number>(0);
+  const [conversionRatio, setConversionRatio] = useState<number | ''>('');
+  const [secondaryCostPrice, setSecondaryCostPrice] = useState<number | ''>('');
+  const [secondarySellingPrice, setSecondarySellingPrice] = useState<number | ''>('');
 
   const categories = Array.from(new Set(products.map((p) => p.category)));
 
@@ -64,9 +64,9 @@ export const ProductCatalog: React.FC = () => {
     setPrimaryCostPrice(20);
     setPrimarySellingPrice(25);
     setSecondaryUnit('');
-    setConversionRatio(12);
-    setSecondaryCostPrice(240);
-    setSecondarySellingPrice(300);
+    setConversionRatio('');
+    setSecondaryCostPrice('');
+    setSecondarySellingPrice('');
     setIsModalOpen(true);
   };
 
@@ -80,13 +80,15 @@ export const ProductCatalog: React.FC = () => {
     setCategory(p.category);
     setStockQty(p.stockQty);
     setMinStockAlert(p.minStockAlert);
-    setPrimaryUnit(p.unit.primaryUnit);
-    setPrimaryCostPrice(p.unit.primaryCostPrice);
-    setPrimarySellingPrice(p.unit.primarySellingPrice);
-    setSecondaryUnit(p.unit.secondaryUnit || '');
-    setConversionRatio(p.unit.conversionRatio || 12);
-    setSecondaryCostPrice(p.unit.secondaryCostPrice || 0);
-    setSecondarySellingPrice(p.unit.secondarySellingPrice || 0);
+    setPrimaryUnit(p.unit.primaryUnit || 'Packet');
+    setPrimaryCostPrice(p.unit.primaryCostPrice ?? 0);
+    setPrimarySellingPrice(p.unit.primarySellingPrice ?? 0);
+
+    const hasSec = !!(p.unit.secondaryUnit && p.unit.secondaryUnit.trim());
+    setSecondaryUnit(hasSec ? p.unit.secondaryUnit! : '');
+    setConversionRatio(hasSec && p.unit.conversionRatio ? p.unit.conversionRatio : '');
+    setSecondaryCostPrice(hasSec && p.unit.secondaryCostPrice !== undefined ? p.unit.secondaryCostPrice : '');
+    setSecondarySellingPrice(hasSec && p.unit.secondarySellingPrice !== undefined ? p.unit.secondarySellingPrice : '');
     setIsModalOpen(true);
   };
 
@@ -94,16 +96,17 @@ export const ProductCatalog: React.FC = () => {
     e.preventDefault();
     if (!name.trim()) return;
 
-    const formattedCartonBar = secondaryUnit.trim() && cartonBarcode.trim() ? cartonBarcode.trim() : undefined;
+    const hasSec = !!secondaryUnit.trim();
+    const formattedCartonBar = hasSec && cartonBarcode.trim() ? cartonBarcode.trim() : undefined;
 
     const unitPayload = {
-      primaryUnit,
-      primaryCostPrice: Number(primaryCostPrice),
-      primarySellingPrice: Number(primarySellingPrice),
-      secondaryUnit: secondaryUnit.trim() || undefined,
-      conversionRatio: secondaryUnit.trim() ? Number(conversionRatio) : undefined,
-      secondaryCostPrice: secondaryUnit.trim() ? Number(secondaryCostPrice) : undefined,
-      secondarySellingPrice: secondaryUnit.trim() ? Number(secondarySellingPrice) : undefined,
+      primaryUnit: primaryUnit.trim() || 'Piece',
+      primaryCostPrice: Number(primaryCostPrice) || 0,
+      primarySellingPrice: Number(primarySellingPrice) || 0,
+      secondaryUnit: hasSec ? secondaryUnit.trim() : undefined,
+      conversionRatio: hasSec && Number(conversionRatio) > 0 ? Number(conversionRatio) : undefined,
+      secondaryCostPrice: hasSec && secondaryCostPrice !== '' ? Number(secondaryCostPrice) : undefined,
+      secondarySellingPrice: hasSec && secondarySellingPrice !== '' ? Number(secondarySellingPrice) : undefined,
       secondaryBarcode: formattedCartonBar,
     };
 
@@ -359,19 +362,22 @@ export const ProductCatalog: React.FC = () => {
                         <Edit3 className="h-3.5 w-3.5" />
                         <span>Edit</span>
                       </button>
-                      <button
-                        onClick={() => {
-                          confirmAction({
-                            title: 'Confirm Delete Product',
-                            message: `Are you sure you want to delete product "${p.name}"? This will remove it from the product catalog.`,
-                            actionType: 'DELETE',
-                            onConfirm: () => deleteProduct(p.id),
-                          });
-                        }}
-                        className="px-2 py-1 text-[11px] font-bold text-red-500 bg-red-50 dark:bg-red-950/60 rounded-lg flex items-center gap-1"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {p.stockQty <= 0 && (
+                        <button
+                          onClick={() => {
+                            confirmAction({
+                              title: 'Confirm Delete Product',
+                              message: `Are you sure you want to delete product "${p.name}"? This will remove it from the product catalog.`,
+                              actionType: 'DELETE',
+                              onConfirm: () => deleteProduct(p.id),
+                            });
+                          }}
+                          className="px-2 py-1 text-[11px] font-bold text-red-500 bg-red-50 dark:bg-red-950/60 rounded-lg flex items-center gap-1"
+                          title="Delete Product (Out of stock)"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -487,20 +493,22 @@ export const ProductCatalog: React.FC = () => {
                           >
                             <Edit3 className="h-4 w-4" />
                           </button>
-                          <button
-                            onClick={() => {
-                              confirmAction({
-                                title: 'Confirm Delete Product',
-                                message: `Are you sure you want to delete product "${p.name}"? This will remove it from the product catalog.`,
-                                actionType: 'DELETE',
-                                onConfirm: () => deleteProduct(p.id),
-                              });
-                            }}
-                            className="p-1.5 text-slate-400 hover:text-red-500"
-                            title="Delete Product"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {p.stockQty <= 0 && (
+                            <button
+                              onClick={() => {
+                                confirmAction({
+                                  title: 'Confirm Delete Product',
+                                  message: `Are you sure you want to delete product "${p.name}"? This will remove it from the product catalog.`,
+                                  actionType: 'DELETE',
+                                  onConfirm: () => deleteProduct(p.id),
+                                });
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-red-500"
+                              title="Delete Product (Out of stock)"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -625,66 +633,138 @@ export const ProductCatalog: React.FC = () => {
               </div>
 
               {/* Unit Pricing Section */}
-              <div className="space-y-3 pt-3 border-t border-slate-200 dark:border-slate-800">
-                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                  Primary Unit Pricing
-                </h4>
-                <div className="grid grid-cols-3 gap-2">
-                  <input
-                    type="text"
-                    value={primaryUnit}
-                    onChange={(e) => setPrimaryUnit(e.target.value)}
-                    placeholder="Unit (Packet/Piece)"
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  <input
-                    type="number"
-                    value={primaryCostPrice}
-                    onChange={(e) => setPrimaryCostPrice(Number(e.target.value))}
-                    placeholder="Cost (NPR)"
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  <input
-                    type="number"
-                    value={primarySellingPrice}
-                    onChange={(e) => setPrimarySellingPrice(Number(e.target.value))}
-                    placeholder="Sell (NPR)"
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-bold text-indigo-600 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-indigo-400"
-                  />
+              <div className="space-y-4 pt-3 border-t border-slate-200 dark:border-slate-800">
+                {/* Primary Single Unit */}
+                <div className="space-y-1.5">
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <ShoppingBag className="h-3.5 w-3.5 text-indigo-500" />
+                    <span>Primary Single Unit Pricing</span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-slate-50/80 dark:bg-slate-800/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        Single Unit Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={primaryUnit}
+                        onChange={(e) => setPrimaryUnit(e.target.value)}
+                        placeholder="e.g. Piece / Packet / Kg"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        Cost Price ({currencySymbol}) <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={primaryCostPrice}
+                        onChange={(e) => setPrimaryCostPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="e.g. 20"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        Selling Price ({currencySymbol}) <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={primarySellingPrice}
+                        onChange={(e) => setPrimarySellingPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="e.g. 25"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-indigo-600 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-indigo-400"
+                        required
+                      />
+                    </div>
+                  </div>
                 </div>
 
-                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 pt-2 flex items-center justify-between">
-                  <span>Secondary Package Unit (Optional e.g. Carton / Box)</span>
-                </h4>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <input
-                    type="text"
-                    value={secondaryUnit}
-                    onChange={(e) => setSecondaryUnit(e.target.value)}
-                    placeholder="Unit Name (e.g. Carton)"
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  <input
-                    type="number"
-                    value={conversionRatio}
-                    onChange={(e) => setConversionRatio(Number(e.target.value))}
-                    placeholder="Pcs/Box (e.g. 30)"
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  <input
-                    type="number"
-                    value={secondaryCostPrice}
-                    onChange={(e) => setSecondaryCostPrice(Number(e.target.value))}
-                    placeholder="Box Cost Price"
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                  <input
-                    type="number"
-                    value={secondarySellingPrice}
-                    onChange={(e) => setSecondarySellingPrice(Number(e.target.value))}
-                    placeholder="Box Selling Price"
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-bold text-indigo-600 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-indigo-400"
-                  />
+                {/* Secondary Package Unit */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <Package className="h-3.5 w-3.5 text-amber-500" />
+                      <span>Secondary Package Unit (Optional e.g. Carton / Box / Case)</span>
+                    </h4>
+                    {secondaryUnit && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSecondaryUnit('');
+                          setConversionRatio('');
+                          setSecondaryCostPrice('');
+                          setSecondarySellingPrice('');
+                          setCartonBarcode('');
+                        }}
+                        className="text-[10px] text-red-500 hover:underline font-semibold"
+                      >
+                        Clear Secondary Unit
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 bg-amber-50/40 dark:bg-amber-950/20 p-2.5 rounded-xl border border-amber-200/80 dark:border-amber-900/40">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        Package Unit Name
+                      </label>
+                      <input
+                        type="text"
+                        value={secondaryUnit}
+                        onChange={(e) => setSecondaryUnit(e.target.value)}
+                        placeholder="e.g. Box / Carton"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        Pcs per {secondaryUnit || 'Box'}
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={conversionRatio}
+                        onChange={(e) => setConversionRatio(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="e.g. 24"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        {secondaryUnit || 'Box'} Cost ({currencySymbol})
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={secondaryCostPrice}
+                        onChange={(e) => setSecondaryCostPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="e.g. 480"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        {secondaryUnit || 'Box'} Sell ({currencySymbol})
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={secondarySellingPrice}
+                        onChange={(e) => setSecondarySellingPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="e.g. 600"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-indigo-600 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-indigo-400"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="space-y-1 pt-1">

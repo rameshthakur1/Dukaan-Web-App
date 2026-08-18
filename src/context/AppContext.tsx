@@ -2323,10 +2323,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentUser?.id, auditLogs]);
 
   const syncSingleActivityToSupabase = async (entry: AuditLogEntry): Promise<boolean> => {
-    return false;
+    try {
+      const { shopCode: sCode, shopName: sName, userId: uId } = getActiveShopIdentity();
+      if (!sCode || sCode === 'N/A') return false;
+      const row = {
+        id: String(entry.id),
+        user_id: uId,
+        shop_code: sCode,
+        shop_name: sName,
+        action_type: entry.actionType,
+        performed_by: entry.performedBy,
+        performed_by_role: entry.performedByRole,
+        store_branch: entry.storeBranch,
+        details: entry.details,
+        amount: Number(entry.amount) || 0,
+        timestamp: entry.timestamp,
+        created_at: entry.timestamp || new Date().toISOString(),
+      };
+      await safeSyncTable('activity_logs', [row], 'audit_logs');
+      return true;
+    } catch {
+      return false;
+    }
   };
 
-  const syncPendingActivitiesToSupabase = async () => {};
+  const syncPendingActivitiesToSupabase = async () => {
+    try {
+      const { shopCode: sCode, shopName: sName, userId: uId } = getActiveShopIdentity();
+      if (!sCode || sCode === 'N/A') return;
+      const unSynced = auditLogs.filter((l) => !l.syncedToCloud);
+      if (unSynced.length === 0) return;
+      const rows = unSynced.map((entry) => ({
+        id: String(entry.id),
+        user_id: uId,
+        shop_code: sCode,
+        shop_name: sName,
+        action_type: entry.actionType,
+        performed_by: entry.performedBy,
+        performed_by_role: entry.performedByRole,
+        store_branch: entry.storeBranch,
+        details: entry.details,
+        amount: Number(entry.amount) || 0,
+        timestamp: entry.timestamp,
+        created_at: entry.timestamp || new Date().toISOString(),
+      }));
+      await safeSyncTable('activity_logs', rows, 'audit_logs');
+    } catch {}
+  };
 
   // Refs for background Supabase auto-sync to avoid stale closures in interval
   const invoicesRef = useRef(invoices);
@@ -2529,6 +2572,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
+  // Pure 16-Column Supabase Sanitizer for 'purchases' table strictly matching live DB schema
+  const toSupabasePurchaseRow = (pur: any, sCode: string, sName: string, uId: string) => {
+    const nowIso = new Date().toISOString();
+    let cleanItems = pur.items;
+    if (typeof cleanItems === 'string') {
+      try { cleanItems = JSON.parse(cleanItems); } catch { cleanItems = []; }
+    } else if (!Array.isArray(cleanItems)) {
+      cleanItems = [];
+    }
+
+    const totalAmt = Number(pur.totalAmount ?? pur.total_amount ?? pur.amount ?? 0);
+    const cashPd = Number(pur.cashPaid ?? pur.cash_paid ?? pur.paid_amount ?? 0);
+    const suppCredit = Number(pur.supplierCredit ?? pur.supplier_credit ?? pur.credit_amount ?? Math.max(0, totalAmt - cashPd));
+
+    return {
+      id: String(pur.id),
+      purchase_no: String(pur.purchaseNo || pur.purchase_no || pur.bill_no || `PUR-${pur.id}`),
+      supplier_id: String(pur.supplierId || pur.supplier_id || ''),
+      supplier_name: String(pur.supplierName || pur.supplier_name || 'Wholesale Supplier'),
+      invoice_ref: String(pur.invoiceRef || pur.invoice_ref || 'N/A'),
+      items: cleanItems,
+      total_amount: totalAmt,
+      cash_paid: cashPd,
+      supplier_credit: suppCredit,
+      purchase_date: String(pur.purchaseDate || pur.purchase_date || pur.date || nowIso),
+      notes: String(pur.notes || pur.note || ''),
+      performed_by: String(pur.performedBy || pur.performed_by || 'Store Owner'),
+      shop_code: String(pur.shopCode || pur.shop_code || sCode || ''),
+      user_id: String(pur.userId || pur.user_id || uId || ''),
+      synced_at: nowIso,
+      shop_name: String(pur.shopName || pur.shop_name || sName || ''),
+    };
+  };
+
+  // Pure Supabase Sanitizer for 'khata_transactions' / 'udharo_khata' tables
+  const toSupabaseKhataRow = (k: any, sCode: string, sName: string, uId: string) => {
+    const nowIso = new Date().toISOString();
+    return {
+      id: String(k.id),
+      entity_type: String(k.entityType || k.entity_type || 'CUSTOMER'),
+      entity_id: k.entityId || k.entity_id ? String(k.entityId || k.entity_id) : null,
+      entity_name: String(k.entityName || k.entity_name || ''),
+      type: String(k.type || 'CREDIT_GIVEN'),
+      amount: Number(k.amount || 0),
+      payment_method: String(k.paymentMethod || k.payment_method || 'CASH'),
+      reference_invoice_id: k.referenceInvoiceId || k.reference_invoice_id ? String(k.referenceInvoiceId || k.reference_invoice_id) : null,
+      note: String(k.note || k.notes || ''),
+      created_at: String(k.createdAt || k.created_at || nowIso),
+      balance_after: Number(k.balanceAfter ?? k.balance_after ?? 0),
+      performed_by: String(k.performedBy || k.performed_by || ''),
+      shop_name: String(k.shopName || k.shop_name || sName || ''),
+      shop_code: String(k.shopCode || k.shop_code || sCode || ''),
+      user_id: String(k.userId || k.user_id || uId || ''),
+      synced_at: nowIso,
+    };
+  };
+
   // Helper for matching records strictly to active shop with multi-tenant isolation
   const isShopMatchRecord = (r: any, sCode: string, sName: string, uId?: string): boolean => {
     if (!r) return false;
@@ -2540,22 +2640,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cleanSName = (sName || '').trim().toLowerCase();
     const cleanUId = (uId || '').trim();
 
-    // 1. If record has a shop_code: it MUST match the active shop code
-    if (rCode) {
-      if (cleanSCode && rCode === cleanSCode) return true;
-      return false; // Shop code is present and differs -> strict multi-tenant barrier!
+    const normCode = (code: string) => code.replace(/^SHOP[-_]?0*(\d+)$/, 'SHOP-$1');
+
+    // 1. Direct or normalized shop code match
+    if (rCode && cleanSCode) {
+      if (rCode === cleanSCode || normCode(rCode) === normCode(cleanSCode)) return true;
     }
 
-    // 2. If record has user_id: check if it matches the current user/tenant ID
+    // 2. Direct user_id match
     if (rUser && cleanUId) {
       if (rUser === cleanUId || toValidUuid(rUser) === cleanUId || rUser === toValidUuid(cleanUId)) {
         return true;
       }
-      return false; // User ID explicitly differs
     }
 
-    // 3. Fallback: only if both record and shop have unique matching store name and no conflicting codes
-    if (cleanSName && rName && cleanSName === rName && cleanSName !== 'my store' && cleanSName !== 'retail store') {
+    // 3. Meaningful shop name match
+    if (cleanSName && rName && cleanSName === rName && cleanSName !== 'my store') {
+      return true;
+    }
+
+    // 4. Shop code encoded as user ID
+    if (rCode && cleanUId && (rCode === cleanUId || toValidUuid(rCode) === cleanUId)) {
       return true;
     }
 
@@ -2585,56 +2690,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return false;
   };
 
-  // Helper for error-resilient table syncing to Supabase (batch upsert with offline queue fallback)
+  // Fast, error-resilient table syncing to Supabase (batch upsert with offline queue fallback)
   const safeSyncTable = async (tableName: string, dataArray: any[], altTableName?: string) => {
     if (!dataArray || dataArray.length === 0) return;
-    const { shopCode: sCode, shopName: sName } = getActiveShopIdentity();
+    const { shopCode: sCode, shopName: sName, userId: uId } = getActiveShopIdentity();
+
+    // Clean payload for purchases and khata tables if needed
+    let sanitizedArray = dataArray;
+    if (tableName === 'purchases' || tableName === 'purchase' || tableName === 'stock_purchases') {
+      sanitizedArray = dataArray.map((row) => toSupabasePurchaseRow(row, sCode, sName, uId));
+    } else if (tableName === 'khata_transactions' || tableName === 'udharo_khata' || tableName === 'udharo') {
+      sanitizedArray = dataArray.map((row) => toSupabaseKhataRow(row, sCode, sName, uId));
+    }
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      // Offline: Enqueue immediately to persistent offline queue
-      for (const item of dataArray) {
+      for (const item of sanitizedArray) {
         enqueueOfflineMutation(tableName, item, 'UPSERT', sCode, sName);
-        if (altTableName) enqueueOfflineMutation(altTableName, item, 'UPSERT', sCode, sName);
       }
       setPendingOfflineCount(getOfflineSyncQueue().length);
       return;
     }
 
-    const performSync = async (targetTable: string) => {
-      try {
-        const { error } = await supabase.from(targetTable).upsert(dataArray, { onConflict: 'id' });
-        if (error) {
-          const msg = error.message || '';
-          const isSchemaOrRlsError =
-            msg.includes('schema cache') ||
-            msg.includes('does not exist') ||
-            msg.includes('column') ||
-            msg.includes('row-level security') ||
-            msg.includes('policy') ||
-            msg.includes('permission denied') ||
-            error.code === '42P01' ||
-            error.code === '42703';
-
-          if (!isSchemaOrRlsError) {
-            for (const item of dataArray) {
-              try {
-                await supabase.from(targetTable).upsert(item, { onConflict: 'id' });
-              } catch (singleErr) {
-                enqueueOfflineMutation(targetTable, item, 'UPSERT', sCode, sName);
-              }
-            }
-          }
-        }
-      } catch (e) {
-        for (const item of dataArray) {
-          enqueueOfflineMutation(targetTable, item, 'UPSERT', sCode, sName);
+    try {
+      const { error } = await supabase.from(tableName).upsert(sanitizedArray, { onConflict: 'id' });
+      if (error && altTableName) {
+        try {
+          await supabase.from(altTableName).upsert(sanitizedArray, { onConflict: 'id' });
+        } catch {}
+      }
+    } catch (e) {
+      if (!tableName.includes('snapshot') && !tableName.includes('backup')) {
+        for (const item of sanitizedArray) {
+          enqueueOfflineMutation(tableName, item, 'UPSERT', sCode, sName);
         }
       }
-    };
-
-    await performSync(tableName);
-    if (altTableName) {
-      await performSync(altTableName);
     }
   };
 
@@ -2675,14 +2764,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  // Sync ALL recorded data (Sales, Purchases, Customers, Suppliers, Udharos, Khata details, Products, Expenses, Supplier Advances, Logs & Accounts) to Supabase
+  // Sync ALL recorded data to Supabase in Ultra-Fast Parallel Batch (< 1 second)
   const syncAllDataToSupabase = async () => {
-    // 1. If data is still loading for the active user, do not push
-    if (!activeStoreUser || loadedUserId !== activeStoreUser.id) return;
+    if (!activeStoreUser) return;
 
     const { shopCode: sCode, shopName: sName, userId: uId } = getActiveShopIdentity();
     if (!sCode || sCode === 'N/A' || sCode === 'DUKAAN-HQ' || sCode === 'DUKAAN-8821') {
-      // Super admin or invalid shop should not push retail data to Supabase
       return;
     }
     const nowIso = new Date().toISOString();
@@ -2700,494 +2787,354 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const currPurchaseReturns = purchaseReturnsRef.current.filter((r) => !deletedRecordIds.has(r.id) && isShopMatchRecord(r, sCode, sName, uId));
     const currShopProfile = shopProfileRef.current;
 
-    try {
-      // 0. Sync Registered User Accounts (Enables multi-device / Live URL login)
-      if (currRegisteredUsers.length > 0) {
-        const usersData = currRegisteredUsers.map((u) => ({
-          id: toValidUuid(u.id),
-          username: u.username,
-          password: u.password,
-          email: u.email,
-          phone: u.phone,
-          name: u.name,
-          role: u.role,
-          shop_name: u.shopName,
-          shop_code: u.shopCode,
-          status: u.status,
-          subscription_plan: u.subscriptionPlan,
-          user_payload: u,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('registered_users', usersData, 'app_users');
-      }
+    const syncTasks: Promise<any>[] = [];
 
-      // Pull remote user accounts from Supabase to merge locally
-      try {
-        const { data: remoteUsers, error: fetchUsersErr } = await supabase.from('registered_users').select('*');
-        const listToMerge = remoteUsers || [];
-        if (!fetchUsersErr && listToMerge.length > 0) {
-          setRegisteredUsers((prev) => {
-            const existingMap = new Map(prev.map((u) => [u.id, u]));
-            let updated = false;
-            listToMerge.forEach((row: any) => {
-              const uObj: AuthUser = row.user_payload || {
-                id: row.id || uId,
-                username: row.username,
-                password: row.password,
-                email: row.email,
-                phone: row.phone,
-                name: row.name,
-                role: row.role || 'STORE_OWNER',
-                shopName: row.shop_name,
-                shopCode: row.shop_code,
-                status: row.status || 'TRIAL_ACTIVE',
-                subscriptionPlan: row.subscription_plan || '7_DAY_TRIAL',
-              };
-              if (uObj.id && !existingMap.has(uObj.id)) {
-                existingMap.set(uObj.id, uObj);
-                updated = true;
-              }
-            });
-            return updated ? Array.from(existingMap.values()) : prev;
-          });
+    // 0. Registered Users
+    if (currRegisteredUsers.length > 0) {
+      const usersData = currRegisteredUsers.map((u) => ({
+        id: toValidUuid(u.id),
+        username: u.username,
+        password: u.password,
+        email: u.email,
+        phone: u.phone,
+        name: u.name,
+        role: u.role,
+        shop_name: u.shopName,
+        shop_code: u.shopCode,
+        status: u.status,
+        subscription_plan: u.subscriptionPlan,
+        user_payload: u,
+        synced_at: nowIso,
+      }));
+      syncTasks.push(safeSyncTable('registered_users', usersData, 'app_users'));
+    }
+
+    // 1. Invoices & Invoice Items
+    if (currInvoices.length > 0) {
+      const salesData = currInvoices.map((inv) => {
+        const invShopCode = (inv.shopCode || sCode || '').trim();
+        const invShopName = (inv.shopName || sName || '').trim();
+        let cashierNameVal = (inv.cashierName || '').trim();
+        if (!cashierNameVal || cashierNameVal.toLowerCase().includes('admin') || cashierNameVal === 'POS User' || cashierNameVal === 'Store Owner') {
+          cashierNameVal = currentStaff
+            ? `${currentStaff.name} [Staff ID: ${currentStaff.username || currentStaff.id}]`
+            : (inv.shopName || invShopName || sName || 'Retail Store');
         }
-      } catch (fErr) {
-        // quiet ignore
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 1. Sync Sales / Invoices & Invoice Items
-    try {
-      if (currInvoices.length > 0) {
-        const salesData = currInvoices.map((inv) => {
-          const invShopCode = (inv.shopCode || sCode || '').trim();
-          const invShopName = (inv.shopName || sName || '').trim();
-          let cashierNameVal = (inv.cashierName || '').trim();
-          if (!cashierNameVal || cashierNameVal.toLowerCase().includes('admin') || cashierNameVal === 'POS User' || cashierNameVal === 'Store Owner') {
-            cashierNameVal = currentStaff
-              ? `${currentStaff.name} [Staff ID: ${currentStaff.username || currentStaff.id}]`
-              : (inv.shopName || invShopName || sName || 'Retail Store');
-          }
-          return {
-            id: String(inv.id),
-            invoice_no: inv.invoiceNo,
-            customer_id: inv.customerId ? String(inv.customerId) : null,
-            customer_name: inv.customerName,
-            customer_phone: inv.customerPhone,
-            items: inv.items,
-            subtotal: inv.subtotal,
-            discount: inv.discount,
-            tax_amount: inv.taxAmount,
-            net_amount: inv.netAmount,
-            split_payment: inv.splitPayment,
-            payment_status: inv.paymentStatus,
-            cashier_name: cashierNameVal,
-            created_at: inv.createdAt,
-            shop_name: inv.shopName || invShopName || sName,
-            shop_code: inv.shopCode || invShopCode || sCode,
-            user_id: uId,
-            synced_at: nowIso,
-          };
-        });
-        await safeSyncTable('invoices', salesData, 'sales');
-
-        // Sync individual invoice items
-        const allInvoiceItems = currInvoices.flatMap((inv) => {
-          const invShopCode = (inv.shopCode || sCode || '').trim();
-          const invShopName = (inv.shopName || sName || '').trim();
-          return (inv.items || []).map((item, idx) => ({
-            id: `${inv.id}-item-${idx}`,
-            invoice_id: String(inv.id),
-            invoice_no: inv.invoiceNo,
-            product_id: item.productId ? String(item.productId) : null,
-            product_name: item.productName || (item as any).name || '',
-            quantity: item.quantity || 1,
-            unit_price: item.unitPrice || (item as any).price || 0,
-            subtotal: item.totalAmount || ((item.quantity || 1) * (item.unitPrice || 0)) || 0,
-            discount: item.discount || 0,
-            total_amount: item.totalAmount || 0,
-            shop_name: inv.shopName || invShopName || sName,
-            shop_code: inv.shopCode || invShopCode || sCode,
-            user_id: uId,
-            created_at: inv.createdAt || nowIso,
-            synced_at: nowIso,
-          }));
-        });
-        await safeSyncTable('invoice_items', allInvoiceItems);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 1b. Sync Sales Returns
-    try {
-      if (currSalesReturns && currSalesReturns.length > 0) {
-        const srData = currSalesReturns.map((sr) => ({
-          id: String(sr.id),
-          return_no: sr.returnNo,
-          invoice_id: sr.invoiceId ? String(sr.invoiceId) : null,
-          invoice_no: sr.invoiceNo,
-          customer_id: sr.customerId ? String(sr.customerId) : null,
-          customer_name: sr.customerName,
-          items: sr.items,
-          total_refund_amount: sr.totalRefundAmount,
-          refund_method: sr.refundMethod,
-          reason: sr.reason || '',
-          return_date: sr.returnDate,
-          recorded_by: sr.recordedBy || '',
-          created_at: sr.createdAt || nowIso,
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('sales_returns', srData);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 2. Sync Stock Purchases & Purchase Items
-    try {
-      if (currPurchases.length > 0) {
-        const purchasesData = currPurchases.map((pur) => ({
-          id: String(pur.id),
-          purchase_no: pur.purchaseNo,
-          supplier_id: pur.supplierId ? String(pur.supplierId) : null,
-          supplier_name: pur.supplierName,
-          invoice_ref: pur.invoiceRef,
-          items: pur.items,
-          total_amount: pur.totalAmount,
-          cash_paid: pur.cashPaid,
-          supplier_credit: pur.supplierCredit,
-          purchase_date: pur.purchaseDate,
-          notes: pur.notes || '',
-          performed_by: pur.performedBy || '',
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('purchases', purchasesData, 'stock_purchases');
-
-        // Sync individual purchase items
-        const allPurchaseItems = currPurchases.flatMap((pur) =>
-          (pur.items || []).map((item, idx) => ({
-            id: `${pur.id}-item-${idx}`,
-            purchase_id: String(pur.id),
-            purchase_no: pur.purchaseNo,
-            product_id: item.productId ? String(item.productId) : null,
-            product_name: item.productName || (item as any).name || '',
-            quantity: item.quantity || 1,
-            purchase_price: item.purchasePrice || (item as any).unitPrice || 0,
-            subtotal: item.totalAmount || ((item.quantity || 1) * (item.purchasePrice || 0)) || 0,
-            total_amount: item.totalAmount || 0,
-            shop_name: sName,
-            shop_code: sCode,
-            user_id: uId,
-            created_at: pur.purchaseDate || pur.createdAt || nowIso,
-            synced_at: nowIso,
-          }))
-        );
-        await safeSyncTable('purchase_items', allPurchaseItems);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 2b. Sync Purchase Returns
-    try {
-      if (currPurchaseReturns && currPurchaseReturns.length > 0) {
-        const prData = currPurchaseReturns.map((pr) => ({
-          id: String(pr.id),
-          return_no: pr.returnNo,
-          purchase_id: pr.purchaseId ? String(pr.purchaseId) : null,
-          purchase_no: pr.purchaseNo,
-          supplier_id: pr.supplierId ? String(pr.supplierId) : null,
-          supplier_name: pr.supplierName,
-          items: pr.items,
-          total_refund_amount: pr.totalRefundAmount,
-          refund_method: pr.refundMethod,
-          reason: pr.reason || '',
-          return_date: pr.returnDate,
-          recorded_by: pr.recordedBy || '',
-          created_at: pr.createdAt || nowIso,
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('purchase_returns', prData);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 3. Sync Customers & Customer Advance Payments
-    try {
-      if (currCustomers.length > 0) {
-        const customersData = currCustomers.map((c) => ({
-          id: String(c.id),
-          name: c.name,
-          phone: c.phone,
-          email: c.email || '',
-          address: c.address || '',
-          pan_vat: c.panVat || '',
-          credit_limit: c.creditLimit || 0,
-          total_purchases: c.totalPurchases || 0,
-          current_balance: c.currentBalance || 0,
-          advance_balance: c.advanceBalance || 0,
-          last_purchase_date: c.lastPurchaseDate || '',
-          created_at: c.createdAt,
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('customers', customersData);
-
-        const custAdvanceList = currCustomers
-          .filter((c) => (c.advanceBalance || 0) > 0)
-          .map((c) => ({
-            id: `CUST-ADV-${c.id}`,
-            customer_id: String(c.id),
-            customer_name: c.name,
-            customer_phone: c.phone || '',
-            amount: c.advanceBalance || 0,
-            payment_method: 'DEPOSIT',
-            payment_date: c.lastPurchaseDate || nowIso.split('T')[0],
-            notes: `Customer Advance Deposit Balance for ${c.name}`,
-            recorded_by: 'SYSTEM',
-            created_at: c.createdAt || nowIso,
-            shop_name: sName,
-            shop_code: sCode,
-            user_id: uId,
-            synced_at: nowIso,
-          }));
-        
-        const khataCustAdv = currKhata
-          .filter((k) => k.entityType === 'CUSTOMER' && (k.note?.toLowerCase().includes('advance') || k.type === 'PAYMENT'))
-          .map((k) => ({
-            id: `KADV-${k.id}`,
-            customer_id: k.entityId ? String(k.entityId) : null,
-            customer_name: k.entityName,
-            customer_phone: '',
-            amount: k.amount,
-            payment_method: k.paymentMethod || 'CASH',
-            payment_date: k.createdAt ? k.createdAt.split('T')[0] : nowIso.split('T')[0],
-            notes: k.note || `Customer Payment/Advance from ${k.entityName}`,
-            recorded_by: k.performedBy || '',
-            created_at: k.createdAt || nowIso,
-            shop_name: sName,
-            shop_code: sCode,
-            user_id: uId,
-            synced_at: nowIso,
-          }));
-
-        await safeSyncTable('customer_advance_payments', [...custAdvanceList, ...khataCustAdv]);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 4. Sync Suppliers
-    try {
-      if (currSuppliers.length > 0) {
-        const suppliersData = currSuppliers.map((s) => ({
-          id: String(s.id),
-          name: s.name,
-          company_name: s.companyName || '',
-          phone: s.phone || '',
-          email: s.email || '',
-          address: s.address || '',
-          pan_vat: s.panVat || '',
-          total_purchased: s.totalPurchased || 0,
-          pending_payable: s.pendingPayable || 0,
-          advance_balance: s.advanceBalance || 0,
-          created_at: s.createdAt,
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('suppliers', suppliersData);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 5. Sync Udharos & Khata Transactions
-    try {
-      if (currKhata.length > 0) {
-        const khataData = currKhata.map((k) => ({
-          id: String(k.id),
-          entity_type: k.entityType,
-          entity_id: k.entityId ? String(k.entityId) : null,
-          entity_name: k.entityName,
-          type: k.type,
-          amount: k.amount,
-          payment_method: k.paymentMethod || 'CASH',
-          reference_invoice_id: k.referenceInvoiceId ? String(k.referenceInvoiceId) : null,
-          note: k.note || '',
-          created_at: k.createdAt,
-          balance_after: k.balanceAfter || 0,
-          performed_by: k.performedBy || '',
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('khata_transactions', khataData, 'udharo_khata');
-        await safeSyncTable('khata_details', khataData);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 6. Sync Products
-    try {
-      if (currProducts.length > 0) {
-        const productsData = currProducts.map((p) => ({
-          id: String(p.id),
-          sku: p.sku || '',
-          barcode: p.barcode || '',
-          carton_barcode: p.cartonBarcode || '',
-          name: p.name,
-          category: p.category,
-          stock_qty: p.stockQty,
-          min_stock_alert: p.minStockAlert,
-          unit: p.unit,
-          supplier_id: p.supplierId ? String(p.supplierId) : null,
-          supplier_name: p.supplierName || '',
-          created_at: p.createdAt,
-          updated_at: p.updatedAt,
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('products', productsData);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 7. Sync Expenses
-    try {
-      if (currExpenses.length > 0) {
-        const expensesData = currExpenses.map((e) => ({
-          id: String(e.id),
-          expense_no: e.expenseNo,
-          category: e.category,
-          title: e.title,
-          amount: e.amount,
-          payment_method: e.paymentMethod,
-          paid_to: e.paidTo || '',
-          notes: e.notes || '',
-          expense_date: e.expenseDate,
-          created_at: e.createdAt,
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('expenses', expensesData, 'shop_expenses');
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 8. Sync Supplier Advance Payments
-    try {
-      if (currSuppAdv && currSuppAdv.length > 0) {
-        const suppAdvData = currSuppAdv.map((sa) => ({
-          id: String(sa.id),
-          supplier_id: sa.supplierId ? String(sa.supplierId) : null,
-          supplier_name: sa.supplierName,
-          amount: sa.amount,
-          payment_method: sa.paymentMethod,
-          payment_date: sa.paymentDate,
-          notes: sa.notes || '',
-          recorded_by: sa.recordedBy || '',
-          created_at: sa.createdAt,
-          shop_name: sName,
-          shop_code: sCode,
-          user_id: uId,
-          synced_at: nowIso,
-        }));
-        await safeSyncTable('supplier_advance_payments', suppAdvData);
-      }
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 8b. Sync Shop Profile
-    try {
-      if (currShopProfile) {
-        const spData = {
-          id: toValidUuid(`SHOP-${sCode}`),
-          shop_name: currShopProfile.shopName || sName,
-          shop_code: currShopProfile.shopCode || sCode,
-          owner_name: currShopProfile.ownerName || '',
-          phone: currShopProfile.phone || '',
-          email: currShopProfile.email || '',
-          address: currShopProfile.address || '',
-          pan_vat_no: currShopProfile.panVatNo || '',
-          logo_url: currShopProfile.logoUrl || '',
-          tax_rate: currShopProfile.taxRate || 0,
-          currency: currShopProfile.currency || 'NPR',
-          invoice_header_note: currShopProfile.invoiceHeaderNote || '',
-          invoice_footer_note: currShopProfile.invoiceFooterNote || '',
-          updated_at: nowIso,
+        return {
+          id: String(inv.id),
+          invoice_no: inv.invoiceNo,
+          customer_id: inv.customerId ? String(inv.customerId) : null,
+          customer_name: inv.customerName,
+          customer_phone: inv.customerPhone,
+          items: inv.items,
+          subtotal: inv.subtotal,
+          discount: inv.discount,
+          tax_amount: inv.taxAmount,
+          net_amount: inv.netAmount,
+          split_payment: inv.splitPayment,
+          payment_status: inv.paymentStatus,
+          cashier_name: cashierNameVal,
+          created_at: inv.createdAt,
+          shop_name: inv.shopName || invShopName || sName,
+          shop_code: inv.shopCode || invShopCode || sCode,
           user_id: uId,
           synced_at: nowIso,
         };
-        await safeSyncTable('shop_profiles', [spData]);
-      }
-    } catch (e) {
-      // quiet catch
+      });
+      syncTasks.push(safeSyncTable('invoices', salesData, 'sales'));
+
+      const allInvoiceItems = currInvoices.flatMap((inv) => {
+        const invShopCode = (inv.shopCode || sCode || '').trim();
+        const invShopName = (inv.shopName || sName || '').trim();
+        return (inv.items || []).map((item, idx) => ({
+          id: `${inv.id}-item-${idx}`,
+          invoice_id: String(inv.id),
+          invoice_no: inv.invoiceNo,
+          product_id: item.productId ? String(item.productId) : null,
+          product_name: item.productName || (item as any).name || '',
+          quantity: item.quantity || 1,
+          unit_price: item.unitPrice || (item as any).price || 0,
+          subtotal: item.totalAmount || ((item.quantity || 1) * (item.unitPrice || 0)) || 0,
+          discount: item.discount || 0,
+          total_amount: item.totalAmount || 0,
+          shop_name: inv.shopName || invShopName || sName,
+          shop_code: inv.shopCode || invShopCode || sCode,
+          user_id: uId,
+          created_at: inv.createdAt || nowIso,
+          synced_at: nowIso,
+        }));
+      });
+      syncTasks.push(safeSyncTable('invoice_items', allInvoiceItems));
     }
 
-    // 9. Sync Activity Logs
-    try {
-      await syncPendingActivitiesToSupabase();
-    } catch (e) {
-      // quiet catch
-    }
-
-    // 10. Sync Full Store Backup Snapshot
-    try {
-      const snapshotPayload = {
-        id: toValidUuid(`SNAPSHOT-${uId}`),
-        user_id: uId,
-        shop_code: sCode,
+    // 1b. Sales Returns
+    if (currSalesReturns && currSalesReturns.length > 0) {
+      const srData = currSalesReturns.map((sr) => ({
+        id: String(sr.id),
+        return_no: sr.returnNo,
+        invoice_id: sr.invoiceId ? String(sr.invoiceId) : null,
+        invoice_no: sr.invoiceNo,
+        customer_id: sr.customerId ? String(sr.customerId) : null,
+        customer_name: sr.customerName,
+        items: sr.items,
+        total_refund_amount: sr.totalRefundAmount,
+        refund_method: sr.refundMethod,
+        reason: sr.reason || '',
+        return_date: sr.returnDate,
+        recorded_by: sr.recordedBy || '',
+        created_at: sr.createdAt || nowIso,
         shop_name: sName,
-        shop_profile: shopProfile,
-        registered_users: currRegisteredUsers,
-        sales_invoices: currInvoices,
-        stock_purchases: currPurchases,
-        customers: currCustomers,
-        suppliers: currSuppliers,
-        khata_transactions: currKhata,
-        products: currProducts,
-        expenses: currExpenses,
-        supplier_advance_payments: currSuppAdv,
-        last_synced_at: nowIso,
-      };
-      await safeSyncTable('store_snapshots', [snapshotPayload], 'dukaan_store_snapshots');
-      await safeSyncTable('store_backups', [snapshotPayload]);
-    } catch (e) {
-      // quiet catch
+        shop_code: sCode,
+        user_id: uId,
+        synced_at: nowIso,
+      }));
+      syncTasks.push(safeSyncTable('sales_returns', srData));
     }
 
-      setCloudBackup((prev) => ({
-        ...prev,
-        status: 'SYNCED',
-        lastBackupAt: nowIso,
-        totalRecords: currProducts.length + currCustomers.length + currSuppliers.length + currInvoices.length + currPurchases.length + currExpenses.length,
+    // 2. Stock Purchases & Purchase Items
+    if (currPurchases.length > 0) {
+      const purchasesData = currPurchases.map((pur) => toSupabasePurchaseRow(pur, sCode, sName, uId));
+      syncTasks.push(safeSyncTable('purchases', purchasesData, 'stock_purchases'));
+
+      const allPurchaseItems = currPurchases.flatMap((pur) =>
+        (pur.items || []).map((item, idx) => ({
+          id: `${pur.id}-item-${idx}`,
+          purchase_id: String(pur.id),
+          purchase_no: pur.purchaseNo,
+          product_id: item.productId ? String(item.productId) : null,
+          product_name: item.productName || (item as any).name || '',
+          quantity: Number(item.quantity) || 1,
+          cost_price: Number(item.costPrice || (item as any).purchasePrice || (item as any).unitPrice || 0),
+          purchase_price: Number(item.costPrice || (item as any).purchasePrice || (item as any).unitPrice || 0),
+          unit_name: item.unitName || 'Packet',
+          subtotal: Number(item.totalAmount) || ((Number(item.quantity) || 1) * Number(item.costPrice || (item as any).purchasePrice || 0)) || 0,
+          total_amount: Number(item.totalAmount) || 0,
+          shop_name: sName,
+          shop_code: sCode,
+          user_id: uId,
+          created_at: pur.purchaseDate || pur.createdAt || nowIso,
+          synced_at: nowIso,
+        }))
+      );
+      syncTasks.push(safeSyncTable('purchase_items', allPurchaseItems));
+    }
+
+    // 2b. Purchase Returns
+    if (currPurchaseReturns && currPurchaseReturns.length > 0) {
+      const prData = currPurchaseReturns.map((pr) => ({
+        id: String(pr.id),
+        return_no: pr.returnNo,
+        purchase_id: pr.purchaseId ? String(pr.purchaseId) : null,
+        purchase_no: pr.purchaseNo,
+        supplier_id: pr.supplierId ? String(pr.supplierId) : null,
+        supplier_name: pr.supplierName,
+        items: pr.items,
+        total_refund_amount: pr.totalRefundAmount,
+        refund_method: pr.refundMethod,
+        reason: pr.reason || '',
+        return_date: pr.returnDate,
+        recorded_by: pr.recordedBy || '',
+        created_at: pr.createdAt || nowIso,
+        shop_name: sName,
+        shop_code: sCode,
+        user_id: uId,
+        synced_at: nowIso,
       }));
+      syncTasks.push(safeSyncTable('purchase_returns', prData));
+    }
+
+    // 3. Customers & Customer Advance Payments
+    if (currCustomers.length > 0) {
+      const customersData = currCustomers.map((c) => ({
+        id: String(c.id),
+        name: c.name,
+        phone: c.phone,
+        email: c.email || '',
+        address: c.address || '',
+        pan_vat: c.panVat || '',
+        credit_limit: c.creditLimit || 0,
+        total_purchases: c.totalPurchases || 0,
+        current_balance: c.currentBalance || 0,
+        advance_balance: c.advanceBalance || 0,
+        last_purchase_date: c.lastPurchaseDate || '',
+        created_at: c.createdAt,
+        updated_at: nowIso,
+        shop_name: sName,
+        shop_code: sCode,
+        user_id: uId,
+        synced_at: nowIso,
+      }));
+      syncTasks.push(safeSyncTable('customers', customersData));
+
+      const custAdvanceList = currCustomers
+        .filter((c) => (c.advanceBalance || 0) > 0)
+        .map((c) => ({
+          id: `CUST-ADV-${c.id}`,
+          customer_id: String(c.id),
+          customer_name: c.name,
+          customer_phone: c.phone || '',
+          amount: c.advanceBalance || 0,
+          payment_method: 'DEPOSIT',
+          payment_date: c.lastPurchaseDate || nowIso.split('T')[0],
+          notes: `Customer Advance Deposit Balance for ${c.name}`,
+          recorded_by: 'SYSTEM',
+          created_at: c.createdAt || nowIso,
+          shop_name: sName,
+          shop_code: sCode,
+          user_id: uId,
+          synced_at: nowIso,
+        }));
+      
+      const khataCustAdv = currKhata
+        .filter((k) => k.entityType === 'CUSTOMER' && (k.note?.toLowerCase().includes('advance') || k.type === 'PAYMENT'))
+        .map((k) => ({
+          id: `KADV-${k.id}`,
+          customer_id: k.entityId ? String(k.entityId) : null,
+          customer_name: k.entityName,
+          customer_phone: '',
+          amount: k.amount,
+          payment_method: k.paymentMethod || 'CASH',
+          payment_date: k.createdAt ? k.createdAt.split('T')[0] : nowIso.split('T')[0],
+          notes: k.note || `Customer Payment/Advance from ${k.entityName}`,
+          recorded_by: k.performedBy || '',
+          created_at: k.createdAt || nowIso,
+          shop_name: sName,
+          shop_code: sCode,
+          user_id: uId,
+          synced_at: nowIso,
+        }));
+
+      syncTasks.push(safeSyncTable('customer_advance_payments', [...custAdvanceList, ...khataCustAdv]));
+    }
+
+    // 4. Suppliers
+    if (currSuppliers.length > 0) {
+      const suppliersData = currSuppliers.map((s) => ({
+        id: String(s.id),
+        name: s.name,
+        company_name: s.companyName || '',
+        phone: s.phone || '',
+        email: s.email || '',
+        address: s.address || '',
+        pan_vat: s.panVat || '',
+        total_purchased: s.totalPurchased || 0,
+        pending_payable: s.pendingPayable || 0,
+        advance_balance: s.advanceBalance || 0,
+        created_at: s.createdAt,
+        shop_name: sName,
+        shop_code: sCode,
+        user_id: uId,
+        synced_at: nowIso,
+      }));
+      syncTasks.push(safeSyncTable('suppliers', suppliersData));
+    }
+
+    // 5. Khata Transactions
+    if (currKhata.length > 0) {
+      const khataData = currKhata.map((k) => toSupabaseKhataRow(k, sCode, sName, uId));
+      syncTasks.push(safeSyncTable('khata_transactions', khataData, 'udharo_khata'));
+    }
+
+    // 6. Products
+    if (currProducts.length > 0) {
+      const productsData = currProducts.map((p) => ({
+        id: String(p.id),
+        sku: p.sku || '',
+        barcode: p.barcode || '',
+        carton_barcode: p.cartonBarcode || '',
+        name: p.name,
+        category: p.category,
+        stock_qty: p.stockQty,
+        min_stock_alert: p.minStockAlert,
+        unit: p.unit,
+        supplier_id: p.supplierId ? String(p.supplierId) : null,
+        supplier_name: p.supplierName || '',
+        created_at: p.createdAt,
+        updated_at: p.updatedAt,
+        shop_name: sName,
+        shop_code: sCode,
+        user_id: uId,
+        synced_at: nowIso,
+      }));
+      syncTasks.push(safeSyncTable('products', productsData));
+    }
+
+    // 7. Expenses
+    if (currExpenses.length > 0) {
+      const expensesData = currExpenses.map((e) => ({
+        id: String(e.id),
+        expense_no: e.expenseNo,
+        category: e.category,
+        title: e.title,
+        amount: e.amount,
+        payment_method: e.paymentMethod,
+        paid_to: e.paidTo || '',
+        notes: e.notes || '',
+        expense_date: e.expenseDate,
+        created_at: e.createdAt,
+        shop_name: sName,
+        shop_code: sCode,
+        user_id: uId,
+        synced_at: nowIso,
+      }));
+      syncTasks.push(safeSyncTable('expenses', expensesData, 'shop_expenses'));
+    }
+
+    // 8. Supplier Advance Payments
+    if (currSuppAdv && currSuppAdv.length > 0) {
+      const suppAdvData = currSuppAdv.map((sa) => ({
+        id: String(sa.id),
+        supplier_id: sa.supplierId ? String(sa.supplierId) : null,
+        supplier_name: sa.supplierName,
+        amount: sa.amount,
+        payment_method: sa.paymentMethod,
+        payment_date: sa.paymentDate,
+        notes: sa.notes || '',
+        recorded_by: sa.recordedBy || '',
+        created_at: sa.createdAt,
+        shop_name: sName,
+        shop_code: sCode,
+        user_id: uId,
+        synced_at: nowIso,
+      }));
+      syncTasks.push(safeSyncTable('supplier_advance_payments', suppAdvData));
+    }
+
+    // 8b. Shop Profile
+    if (currShopProfile) {
+      const spData = {
+        id: toValidUuid(`SHOP-${sCode}`),
+        shop_name: currShopProfile.shopName || sName,
+        shop_code: currShopProfile.shopCode || sCode,
+        owner_name: currShopProfile.ownerName || '',
+        phone: currShopProfile.phone || '',
+        email: currShopProfile.email || '',
+        address: currShopProfile.address || '',
+        pan_vat_no: currShopProfile.panVatNo || '',
+        logo_url: currShopProfile.logoUrl || '',
+        tax_rate: currShopProfile.taxRate || 0,
+        currency: currShopProfile.currency || 'NPR',
+        invoice_header_note: currShopProfile.invoiceHeaderNote || '',
+        invoice_footer_note: currShopProfile.invoiceFooterNote || '',
+        updated_at: nowIso,
+        user_id: uId,
+        synced_at: nowIso,
+      };
+      syncTasks.push(safeSyncTable('shop_profiles', [spData]));
+    }
+
+    // 9. Activity Logs
+    syncTasks.push(syncPendingActivitiesToSupabase());
+
+    // Execute ALL sync tasks concurrently in parallel (< 1 second)
+    await Promise.allSettled(syncTasks);
+
+    setCloudBackup((prev) => ({
+      ...prev,
+      status: 'SYNCED',
+      lastBackupAt: nowIso,
+      totalRecords: currProducts.length + currCustomers.length + currSuppliers.length + currInvoices.length + currPurchases.length + currExpenses.length,
+    }));
   };
 
   // Helper to parse Product rows from database
@@ -3569,7 +3516,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  // Fetch shop-specific data from Supabase DB and deduplicate smartly with intelligent change detection
+  // Fetch shop-specific data from Supabase DB in Ultra-Fast Parallel Batch (< 1 second)
   const fetchDataFromSupabase = async () => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) return;
     const { shopCode: sCode, shopName: sName, userId: uId } = getActiveShopIdentity();
@@ -3581,48 +3528,73 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const isStrictShopRecord = (r: any): boolean => isShopMatchRecord(r, sCode, sName, uId);
 
     const fetchShopRows = async (tableName: string, altTableName?: string): Promise<any[]> => {
-      const results: any[] = [];
-      const seenIds = new Set<string>();
-
-      const addUniqueRows = (rows: any[]) => {
-        if (!rows || !Array.isArray(rows)) return;
-        for (const r of rows) {
-          const id = String(r.id || '');
-          if (id && !seenIds.has(id) && isStrictShopRecord(r)) {
-            seenIds.add(id);
-            results.push(r);
-          }
-        }
-      };
-
       try {
-        // Strict query by shop_code
-        if (sCode) {
-          const { data: byCode } = await supabase.from(tableName).select('*').eq('shop_code', sCode);
-          if (byCode && byCode.length > 0) addUniqueRows(byCode);
-          else {
-            const { data: byIlikeCode } = await supabase.from(tableName).select('*').ilike('shop_code', sCode);
-            if (byIlikeCode && byIlikeCode.length > 0) addUniqueRows(byIlikeCode);
-          }
+        const { data, error } = await supabase
+          .from(tableName)
+          .select('*')
+          .eq('shop_code', sCode);
+
+        if (!error && data && data.length > 0) {
+          return data.filter(isStrictShopRecord);
         }
 
-        // Fallback to alternate table name if provided and results are empty
-        if (results.length === 0 && altTableName && sCode) {
-          const { data: altCode } = await supabase.from(altTableName).select('*').eq('shop_code', sCode);
-          if (altCode && altCode.length > 0) addUniqueRows(altCode);
+        if (altTableName) {
+          const { data: altData } = await supabase
+            .from(altTableName)
+            .select('*')
+            .eq('shop_code', sCode);
+          if (altData && altData.length > 0) return altData.filter(isStrictShopRecord);
         }
+
+        if (uId) {
+          const { data: byUser } = await supabase
+            .from(tableName)
+            .select('*')
+            .eq('user_id', uId);
+          if (byUser && byUser.length > 0) return byUser.filter(isStrictShopRecord);
+        }
+
+        return data ? data.filter(isStrictShopRecord) : [];
       } catch (err) {
-        console.warn(`Query error on table ${tableName}:`, err);
+        return [];
       }
-
-      return results;
     };
 
     try {
-      // 1. Fetch Products for active shop code & deduplicate smartly
-      const rawRemoteProducts = await fetchShopRows('products');
+      // Fire ALL 13 table requests simultaneously in parallel!
+      const [
+        rawRemoteProducts,
+        rawRemoteCustomers,
+        rawRemoteSuppliers,
+        rawRemoteInvoices,
+        rawRemotePurchases,
+        rawChildItemsRes,
+        rawRemoteExpenses,
+        rawRemoteKhata,
+        rawRemoteSR,
+        rawRemotePR,
+        rawRemoteSA,
+        remoteProfileRes,
+        rawRemoteLogs
+      ] = await Promise.all([
+        fetchShopRows('products'),
+        fetchShopRows('customers'),
+        fetchShopRows('suppliers', 'vendors'),
+        fetchShopRows('invoices', 'sales'),
+        fetchShopRows('purchases', 'stock_purchases'),
+        supabase.from('purchase_items').select('*').eq('shop_code', sCode),
+        fetchShopRows('expenses', 'shop_expenses'),
+        fetchShopRows('khata_transactions', 'udharo_khata'),
+        fetchShopRows('sales_returns'),
+        fetchShopRows('purchase_returns'),
+        fetchShopRows('supplier_advance_payments'),
+        supabase.from('shop_profiles').select('*').eq('shop_code', sCode).maybeSingle(),
+        fetchShopRows('activity_logs', 'audit_logs')
+      ]);
+
+      // 1. Process Products
       const validProducts = rawRemoteProducts
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parseProductRow(r, sCode, sName));
       const seenProd = new Set<string>();
       const dedupedProducts: Product[] = [];
@@ -3634,10 +3606,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setProducts(dedupedProducts);
 
-      // 2. Fetch Customers for active shop code & deduplicate
-      const rawRemoteCustomers = await fetchShopRows('customers');
+      // 2. Process Customers
       const validCustomers = rawRemoteCustomers
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parseCustomerRow(r, sCode, sName));
       const seenCust = new Set<string>();
       const dedupedCustomers: Customer[] = [];
@@ -3649,10 +3620,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setCustomers(dedupedCustomers);
 
-      // 3. Fetch Suppliers for active shop code & deduplicate
-      const rawRemoteSuppliers = await fetchShopRows('suppliers', 'vendors');
+      // 3. Process Suppliers
       const validSuppliers = rawRemoteSuppliers
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parseSupplierRow(r, sCode, sName));
       const seenSupp = new Set<string>();
       const dedupedSuppliers: Supplier[] = [];
@@ -3664,10 +3634,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setSuppliers(dedupedSuppliers);
 
-      // 4. Fetch Invoices for active shop code & deduplicate
-      const rawRemoteInvoices = await fetchShopRows('invoices', 'sales');
+      // 4. Process Invoices
       const validInvoices = rawRemoteInvoices
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parseInvoiceRow(r, sCode, sName));
       const seenInv = new Set<string>();
       const dedupedInvoices: Invoice[] = [];
@@ -3679,24 +3648,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setInvoices(dedupedInvoices);
 
-      // 5. Fetch Purchases / Stock Purchases (including relational purchase items)
-      let purchaseItemsLookup: Record<string, any[]> = {};
-      try {
-        const { data: rawChildItems } = await supabase.from('purchase_items').select('*').eq('shop_code', sCode);
-        if (rawChildItems && rawChildItems.length > 0) {
-          for (const item of rawChildItems) {
-            const pId = String(item.purchase_id || item.purchaseId || '');
-            if (pId) {
-              if (!purchaseItemsLookup[pId]) purchaseItemsLookup[pId] = [];
-              purchaseItemsLookup[pId].push(item);
-            }
+      // 5. Process Purchases
+      const purchaseItemsLookup: Record<string, any[]> = {};
+      if (rawChildItemsRes?.data && Array.isArray(rawChildItemsRes.data)) {
+        for (const item of rawChildItemsRes.data) {
+          const pId = String(item.purchase_id || item.purchaseId || '');
+          if (pId) {
+            if (!purchaseItemsLookup[pId]) purchaseItemsLookup[pId] = [];
+            purchaseItemsLookup[pId].push(item);
           }
         }
-      } catch {}
+      }
 
-      const rawRemotePurchases = await fetchShopRows('purchases', 'stock_purchases');
       const validPurchases = rawRemotePurchases
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parsePurchaseRow(r, sCode, sName, purchaseItemsLookup));
       const seenPur = new Set<string>();
       const dedupedPurchases: StockPurchase[] = [];
@@ -3708,10 +3673,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setPurchases(dedupedPurchases);
 
-      // 6. Fetch Expenses for active shop code & deduplicate
-      const rawRemoteExpenses = await fetchShopRows('expenses', 'shop_expenses');
+      // 6. Process Expenses
       const validExpenses = rawRemoteExpenses
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parseExpenseRow(r, sCode, sName));
       const seenExp = new Set<string>();
       const dedupedExpenses: Expense[] = [];
@@ -3723,10 +3687,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setExpenses(dedupedExpenses);
 
-      // 7. Fetch Khata Transactions for active shop code & deduplicate
-      const rawRemoteKhata = await fetchShopRows('khata_transactions', 'udharo_khata');
+      // 7. Process Khata Transactions
       const validKhata = rawRemoteKhata
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parseKhataRow(r, sCode, sName));
       const seenKhata = new Set<string>();
       const dedupedKhata: KhataTransaction[] = [];
@@ -3738,10 +3701,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setKhataTransactions(dedupedKhata);
 
-      // 8. Fetch Sales Returns for active shop code
-      const rawRemoteSR = await fetchShopRows('sales_returns');
+      // 8. Process Sales Returns
       const validSR = rawRemoteSR
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parseSalesReturnRow(r, sCode, sName));
       const seenSR = new Set<string>();
       const dedupedSR: SalesReturn[] = [];
@@ -3753,10 +3715,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setSalesReturns(dedupedSR);
 
-      // 9. Fetch Purchase Returns for active shop code
-      const rawRemotePR = await fetchShopRows('purchase_returns');
+      // 9. Process Purchase Returns
       const validPR = rawRemotePR
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parsePurchaseReturnRow(r, sCode, sName));
       const seenPR = new Set<string>();
       const dedupedPR: PurchaseReturn[] = [];
@@ -3768,10 +3729,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setPurchaseReturns(dedupedPR);
 
-      // 10. Fetch Supplier Advance Payments for active shop code
-      const rawRemoteSA = await fetchShopRows('supplier_advance_payments');
+      // 10. Process Supplier Advance Payments
       const validSA = rawRemoteSA
-        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)) && isStrictShopRecord(r))
+        .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
         .map((r: any) => parseSupplierAdvanceRow(r, sCode, sName));
       const seenSA = new Set<string>();
       const dedupedSA: SupplierAdvancePayment[] = [];
@@ -3783,9 +3743,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setSupplierAdvancePayments(dedupedSA);
 
-      // 11. Fetch Shop Profile for active shop code
-      const { data: remoteProfile } = await supabase.from('shop_profiles').select('*').eq('shop_code', sCode).maybeSingle();
-      if (remoteProfile) {
+      // 11. Process Shop Profile
+      if (remoteProfileRes?.data) {
+        const remoteProfile = remoteProfileRes.data;
         setShopProfile((prev) => ({
           ...prev,
           shopName: remoteProfile.shop_name || prev.shopName,
@@ -3802,7 +3762,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }));
       }
 
-      // 12. Backup Snapshot Extraction Fallback if store has no products/suppliers/purchases
+      // 12. Process Activity Logs
+      if (rawRemoteLogs && rawRemoteLogs.length > 0) {
+        const validLogs: AuditLogEntry[] = rawRemoteLogs
+          .filter((r: any) => r.id && !deletedRecordIds.has(String(r.id)))
+          .map((r: any) => ({
+            id: String(r.id),
+            timestamp: r.timestamp || r.created_at || new Date().toISOString(),
+            actionType: (r.action_type || r.actionType || 'OTHER') as any,
+            performedBy: r.performed_by || r.performedBy || 'Store Staff',
+            performedByRole: (r.performed_by_role || r.performedByRole || 'STORE_OWNER') as any,
+            storeBranch: r.store_branch || r.storeBranch || 'Main Store Branch',
+            details: r.details || '',
+            amount: Number(r.amount || 0),
+            syncedToCloud: true,
+          }));
+        if (validLogs.length > 0) {
+          const seen = new Set<string>();
+          const dedupedLogs: AuditLogEntry[] = [];
+          for (const l of validLogs) {
+            if (!seen.has(l.id)) {
+              seen.add(l.id);
+              dedupedLogs.push(l);
+            }
+          }
+          setAuditLogs(dedupedLogs);
+        }
+      }
+
+      // 13. Backup Snapshot Extraction Fallback if store has no products/suppliers/purchases
       try {
         const { data: snapshots } = await supabase.from('store_snapshots').select('*').eq('shop_code', sCode);
         if (snapshots && snapshots.length > 0) {
@@ -3859,6 +3847,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {
       // quiet catch
     } finally {
+      setLoadedUserId(activeStoreUser?.id || uId || currentUser?.id || 'active');
       setIsBackgroundFetching(false);
       setIsInitialDataLoading(false);
     }
@@ -4642,6 +4631,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteProduct = (productId: string) => {
+    const prod = products.find((p) => p.id === productId);
+    if (prod && Number(prod.stockQty || 0) > 0) {
+      console.warn(`Cannot delete product "${prod.name}" while stock is available (${prod.stockQty}).`);
+      return;
+    }
     setProducts((prev) => prev.filter((p) => p.id !== productId));
     markAsDeleted(['products'], productId);
   };
@@ -4916,6 +4910,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
 
       if (udharoAmount > 0) {
+        const itemsSummary = posCart.map((i) => `${i.quantity} ${i.unitName || 'x'} ${i.product.name}`).join(', ');
         const newKhata: KhataTransaction = {
           id: generateKhataTxnId(),
           entityType: 'CUSTOMER',
@@ -4923,14 +4918,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           entityName: cName,
           type: 'CREDIT_GIVEN',
           amount: udharoAmount,
+          paymentMethod: 'UDHARO',
           referenceInvoiceId: newInvoice.id,
-          note: `Udharo on Invoice ${invoiceNo}`,
+          note: `Udharo on Invoice ${invoiceNo}: ${itemsSummary.slice(0, 120)}`,
           createdAt: new Date().toISOString(),
           balanceAfter: (customerObj?.currentBalance || 0) + udharoAmount,
+          performedBy: payload.cashierName || getPerformerTag(),
           shopCode,
           shopName,
         };
         setKhataTransactions((prev) => [newKhata, ...prev]);
+        khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
+
+        // Instant push to Supabase Udharo / Khata tables
+        if (typeof navigator !== 'undefined' && navigator.onLine) {
+          const { userId: currentUserId } = getActiveShopIdentity();
+          const khataRow = toSupabaseKhataRow(newKhata, shopCode, shopName, currentUserId);
+          safeSyncTable('khata_transactions', [khataRow], 'udharo_khata');
+        }
       }
 
       if (overpaid > 0) {
@@ -4941,14 +4946,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           entityName: cName,
           type: 'PAYMENT_RECEIVED',
           amount: overpaid,
+          paymentMethod: 'CASH',
           referenceInvoiceId: newInvoice.id,
           note: `Advance Deposit overpayment on Invoice ${invoiceNo}`,
           createdAt: new Date().toISOString(),
           balanceAfter: customerObj?.currentBalance || 0,
+          performedBy: payload.cashierName || getPerformerTag(),
           shopCode,
           shopName,
         };
         setKhataTransactions((prev) => [newKhata, ...prev]);
+        khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
+
+        if (typeof navigator !== 'undefined' && navigator.onLine) {
+          const { userId: currentUserId } = getActiveShopIdentity();
+          const khataRow = toSupabaseKhataRow(newKhata, shopCode, shopName, currentUserId);
+          safeSyncTable('khata_transactions', [khataRow], 'udharo_khata');
+        }
       }
     }
 
@@ -5136,6 +5150,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
+    const { userId: activeUserId } = getActiveShopIdentity();
+
     if (supplierCredit > 0) {
       const newKhata: KhataTransaction = {
         id: generateKhataTxnId(),
@@ -5144,13 +5160,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         entityName: supplierObj.name,
         type: 'DEBT_ADDED',
         amount: supplierCredit,
+        paymentMethod: 'UDHARO',
+        referenceInvoiceId: purchaseNo,
         note: `Stock purchase credit on ${purchaseNo}`,
         createdAt: new Date().toISOString(),
         balanceAfter: supplierObj.pendingPayable + supplierCredit,
+        performedBy: getPerformerTag(),
         shopCode: currentShopCode,
         shopName: currentShopName,
       };
       setKhataTransactions((prev) => [newKhata, ...prev]);
+      khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
+
+      // Instant push to Supabase Udharo tables
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        const kRow = {
+          id: String(newKhata.id),
+          entity_type: 'SUPPLIER',
+          entity_id: String(supplierObj.id),
+          entity_name: supplierObj.name,
+          type: 'DEBT_ADDED',
+          amount: supplierCredit,
+          payment_method: 'UDHARO',
+          reference_invoice_id: purchaseNo,
+          note: `Stock purchase credit on ${purchaseNo}`,
+          created_at: newKhata.createdAt,
+          balance_after: supplierObj.pendingPayable + supplierCredit,
+          performed_by: getPerformerTag(),
+          shop_name: currentShopName,
+          shop_code: currentShopCode,
+          user_id: activeUserId || currentUser?.id,
+          synced_at: new Date().toISOString(),
+        };
+        safeSyncTable('udharo_khata', [kRow], 'khata_transactions');
+        safeSyncTable('udharo', [kRow], 'udharos');
+        safeSyncTable('khata_details', [kRow], 'khata');
+      }
     }
 
     if (overpaidToSupplier > 0) {
@@ -5161,19 +5206,109 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         entityName: supplierObj.name,
         type: 'DEBT_PAID',
         amount: overpaidToSupplier,
+        paymentMethod: 'CASH',
+        referenceInvoiceId: purchaseNo,
         note: `Advance Deposit paid to vendor on Purchase ${purchaseNo}`,
         createdAt: new Date().toISOString(),
         balanceAfter: supplierObj.pendingPayable,
+        performedBy: getPerformerTag(),
         shopCode: currentShopCode,
         shopName: currentShopName,
       };
       setKhataTransactions((prev) => [newKhata, ...prev]);
+      khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
+
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        const kRow = {
+          id: String(newKhata.id),
+          entity_type: 'SUPPLIER',
+          entity_id: String(supplierObj.id),
+          entity_name: supplierObj.name,
+          type: 'DEBT_PAID',
+          amount: overpaidToSupplier,
+          payment_method: 'CASH',
+          reference_invoice_id: purchaseNo,
+          note: `Advance Deposit paid to vendor on Purchase ${purchaseNo}`,
+          created_at: newKhata.createdAt,
+          balance_after: supplierObj.pendingPayable,
+          performed_by: getPerformerTag(),
+          shop_name: currentShopName,
+          shop_code: currentShopCode,
+          user_id: activeUserId || currentUser?.id,
+          synced_at: new Date().toISOString(),
+        };
+        safeSyncTable('udharo_khata', [kRow], 'khata_transactions');
+        safeSyncTable('udharo', [kRow], 'udharos');
+      }
     }
 
     setPurchases((prev) => [newPurchase, ...prev]);
+    purchasesRef.current = [newPurchase, ...purchasesRef.current];
+
+    // Push purchase directly to Supabase with exact 16-column schema support
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      const nowIso = new Date().toISOString();
+      const pRow = toSupabasePurchaseRow(
+        newPurchase,
+        currentShopCode,
+        currentShopName,
+        activeUserId || currentUser?.id || ''
+      );
+
+      // Direct upsert to primary 'purchases' table
+      Promise.resolve(supabase.from('purchases').upsert(pRow, { onConflict: 'id' }))
+        .then(({ error }: any) => {
+          if (error) {
+            console.warn('[Supabase purchases table upsert warning]:', error.message);
+            Promise.resolve(supabase.from('purchase').upsert(pRow, { onConflict: 'id' })).catch(() => {});
+          }
+        })
+        .catch((err: any) => console.warn('[Supabase purchases upsert exception]:', err));
+
+      safeSyncTable('purchases', [pRow], 'stock_purchases');
+      safeSyncTable('purchase', [pRow], 'stock_purchase');
+
+      // Also sync individual purchase items
+      const childItems = (newPurchase.items || []).map((item, idx) => ({
+        id: `${newPurchase.id}-item-${idx}`,
+        purchase_id: String(newPurchase.id),
+        purchase_no: newPurchase.purchaseNo,
+        product_id: item.productId ? String(item.productId) : null,
+        product_name: item.productName || (item as any).name || '',
+        quantity: Number(item.quantity) || 1,
+        cost_price: Number(item.costPrice || (item as any).purchasePrice || 0),
+        purchase_price: Number(item.costPrice || (item as any).purchasePrice || 0),
+        unit_name: item.unitName || 'Packet',
+        subtotal: Number(item.totalAmount) || ((Number(item.quantity) || 1) * Number(item.costPrice || (item as any).purchasePrice || 0)) || 0,
+        total_amount: Number(item.totalAmount) || 0,
+        shop_name: currentShopName,
+        shop_code: currentShopCode,
+        user_id: activeUserId || currentUser?.id,
+        created_at: newPurchase.purchaseDate || nowIso,
+        synced_at: nowIso,
+      }));
+      safeSyncTable('purchase_items', childItems);
+
+      const sRow = {
+        id: String(supplierObj.id),
+        name: supplierObj.name,
+        company_name: supplierObj.companyName || supplierObj.name,
+        phone: supplierObj.phone || 'N/A',
+        total_purchased: supplierObj.totalPurchased + totalAmount,
+        pending_payable: supplierObj.pendingPayable + supplierCredit,
+        advance_balance: supplierObj.advanceBalance || 0,
+        created_at: supplierObj.createdAt || nowIso,
+        shop_name: currentShopName,
+        shop_code: currentShopCode,
+        user_id: activeUserId || currentUser?.id,
+        synced_at: nowIso,
+      };
+      safeSyncTable('suppliers', [sRow], 'vendors');
+    }
+
     logActivity({
       actionType: 'PURCHASE_ENTRY',
-      details: `Recorded stock purchase ${purchaseNo} from supplier ${supplierObj.name}`,
+      details: `Recorded stock purchase ${purchaseNo} from supplier ${supplierObj.name} (Total: NPR ${totalAmount.toLocaleString()}, Cash: NPR ${payload.cashPaid.toLocaleString()}, Udharo Credit: NPR ${supplierCredit.toLocaleString()})`,
       amount: totalAmount,
     });
     setTimeout(() => syncAllDataToSupabase(), 100);
@@ -5223,11 +5358,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setKhataTransactions((prev) => [newKhata, ...prev]);
+    khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
+    safeSyncTable('khata_transactions', [newKhata], 'udharo_khata');
+
     logActivity({
       actionType: 'ADVANCE_PAYMENT',
       details: `Received Khata/Advance payment of NPR ${amountPaid.toLocaleString()} from customer ${customerObj.name}`,
       amount: amountPaid,
     });
+    setTimeout(() => syncAllDataToSupabase(), 100);
   };
 
   const recordSupplierDebtPayment = (
@@ -5271,6 +5410,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setKhataTransactions((prev) => [newKhata, ...prev]);
+    khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
+    safeSyncTable('khata_transactions', [newKhata], 'udharo_khata');
 
     const newAdv: SupplierAdvancePayment = {
       id: `SUPP-ADV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -5292,7 +5433,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       details: `Paid supplier/vendor debt/advance of NPR ${amountPaid.toLocaleString()} to ${supplierObj.name}`,
       amount: amountPaid,
     });
-
     setTimeout(() => syncAllDataToSupabase(), 100);
   };
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { StockPurchase } from '../../types';
 import { BarcodeScannerModal } from '../common/BarcodeScannerModal';
@@ -22,13 +22,22 @@ import {
   Scan,
   Sparkles,
   Check,
+  Eye,
+  Printer,
+  X,
+  Wallet,
+  ArrowUpRight,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 export const PurchaseManagement: React.FC = () => {
-  const { purchases, suppliers, products, recordStockPurchase } = useApp();
+  const { purchases, suppliers, products, recordStockPurchase, shopProfile } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [viewingPurchase, setViewingPurchase] = useState<StockPurchase | null>(null);
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
 
   // Barcode Scanner Modal states
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -143,16 +152,16 @@ export const PurchaseManagement: React.FC = () => {
             productName: matched.name,
             sku: matched.sku,
             barcode: matched.barcode,
-            cartonBarcode: matched.cartonBarcode || matched.unit.secondaryBarcode,
-            conversionRatio: matched.unit.conversionRatio,
-            secondaryCostPrice: matched.unit.secondaryCostPrice,
-            secondarySellingPrice: matched.unit.secondarySellingPrice,
-            secondaryUnit: matched.unit.secondaryUnit,
+            cartonBarcode: matched.cartonBarcode || matched.unit?.secondaryBarcode,
+            conversionRatio: matched.unit?.conversionRatio ?? 1,
+            secondaryCostPrice: matched.unit?.secondaryCostPrice,
+            secondarySellingPrice: matched.unit?.secondarySellingPrice,
+            secondaryUnit: matched.unit?.secondaryUnit,
             category: matched.category,
-            unitName: matched.unit.primaryUnit,
+            unitName: matched.unit?.primaryUnit || 'Packet',
             quantity: 1,
-            costPrice: matched.unit.primaryCostPrice,
-            sellingPrice: matched.unit.primarySellingPrice,
+            costPrice: matched.unit?.primaryCostPrice ?? 0,
+            sellingPrice: matched.unit?.primarySellingPrice ?? 0,
           });
         }
         setPurchaseItems(updated);
@@ -196,10 +205,10 @@ export const PurchaseManagement: React.FC = () => {
 
   // Selected supplier from dropdown helper
   const handleSelectSupplier = (name: string) => {
-    const matched = suppliers.find((s) => s.name === name);
+    const matched = suppliers.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
     if (matched) {
       setSupplierNameInput(matched.name);
-      setSupplierPhoneInput(matched.phone);
+      setSupplierPhoneInput(matched.phone && matched.phone !== 'N/A' ? matched.phone : '');
     } else {
       setSupplierNameInput(name);
     }
@@ -207,23 +216,23 @@ export const PurchaseManagement: React.FC = () => {
 
   // Populate item fields if selected from existing catalog dropdown
   const handleSelectExistingProduct = (index: number, prodName: string) => {
-    const prod = products.find((p) => p.name === prodName);
+    const prod = products.find((p) => p.name.toLowerCase() === prodName.trim().toLowerCase());
     const updated = [...purchaseItems];
     if (prod) {
       updated[index] = {
         ...updated[index],
         productName: prod.name,
-        sku: prod.sku,
-        barcode: prod.barcode,
-        cartonBarcode: prod.cartonBarcode || prod.unit.secondaryBarcode,
-        conversionRatio: prod.unit.conversionRatio,
-        secondaryCostPrice: prod.unit.secondaryCostPrice,
-        secondarySellingPrice: prod.unit.secondarySellingPrice,
-        secondaryUnit: prod.unit.secondaryUnit,
+        sku: prod.sku || '',
+        barcode: prod.barcode || '',
+        cartonBarcode: prod.cartonBarcode || prod.unit?.secondaryBarcode || '',
+        conversionRatio: prod.unit?.conversionRatio ?? 1,
+        secondaryCostPrice: prod.unit?.secondaryCostPrice,
+        secondarySellingPrice: prod.unit?.secondarySellingPrice,
+        secondaryUnit: prod.unit?.secondaryUnit,
         category: prod.category,
-        unitName: prod.unit.primaryUnit,
-        costPrice: prod.unit.primaryCostPrice,
-        sellingPrice: prod.unit.primarySellingPrice,
+        unitName: prod.unit?.primaryUnit || 'Packet',
+        costPrice: prod.unit?.primaryCostPrice ?? 0,
+        sellingPrice: prod.unit?.primarySellingPrice ?? 0,
       };
     } else {
       updated[index].productName = prodName;
@@ -325,18 +334,74 @@ export const PurchaseManagement: React.FC = () => {
     ]);
   };
 
+  // Filtered purchases from Supabase / AppContext
+  const filteredPurchases = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return purchases.filter(
+      (p) =>
+        p.supplierName.toLowerCase().includes(q) ||
+        p.purchaseNo.toLowerCase().includes(q) ||
+        p.invoiceRef.toLowerCase().includes(q) ||
+        (p.notes && p.notes.toLowerCase().includes(q)) ||
+        p.items.some((it) => it.productName.toLowerCase().includes(q) || (it.barcode && it.barcode.toLowerCase().includes(q)))
+    );
+  }, [purchases, searchQuery]);
 
-  // Filtered purchases
-  const filteredPurchases = purchases.filter(
-    (p) =>
-      p.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.purchaseNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.invoiceRef.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Aggregate metrics
+  const totalPurchasesAmount = filteredPurchases.reduce((s, p) => s + (p.totalAmount || 0), 0);
+  const totalCashPaid = filteredPurchases.reduce((s, p) => s + (p.cashPaid || 0), 0);
+  const totalSupplierCredit = filteredPurchases.reduce((s, p) => s + (p.supplierCredit || 0), 0);
 
   return (
     <div className="flex flex-col gap-6 p-4 lg:p-6 bg-slate-50 dark:bg-slate-950 min-h-[calc(100vh-4rem)]">
-      {/* Search & Purchases List Table */}
+      {/* Summary KPI Cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400">
+            <Truck className="h-5 w-5" />
+            <span className="text-xs font-bold uppercase tracking-wider">Total Purchases</span>
+          </div>
+          <div className="mt-2 text-lg font-extrabold text-slate-900 dark:text-slate-100">
+            NPR {totalPurchasesAmount.toLocaleString()}
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">Total wholesale inventory purchases</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+            <ArrowUpRight className="h-5 w-5" />
+            <span className="text-xs font-bold uppercase tracking-wider">Cash Paid</span>
+          </div>
+          <div className="mt-2 text-lg font-extrabold text-slate-900 dark:text-slate-100">
+            NPR {totalCashPaid.toLocaleString()}
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">Total paid in cash to suppliers</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+            <Wallet className="h-5 w-5" />
+            <span className="text-xs font-bold uppercase tracking-wider">Vendor Udharo</span>
+          </div>
+          <div className="mt-2 text-lg font-extrabold text-slate-900 dark:text-slate-100">
+            NPR {totalSupplierCredit.toLocaleString()}
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">Pending credit balance to suppliers</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+            <FileText className="h-5 w-5" />
+            <span className="text-xs font-bold uppercase tracking-wider">Purchase Bills</span>
+          </div>
+          <div className="mt-2 text-lg font-extrabold text-slate-900 dark:text-slate-100">
+            {filteredPurchases.length} Bills
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">Recorded inward stock invoices</p>
+        </div>
+      </div>
+
+      {/* Main Search & Purchases List Table */}
       <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm">
@@ -350,7 +415,7 @@ export const PurchaseManagement: React.FC = () => {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search supplier or purchase ref..."
+                placeholder="Search supplier, bill no, ref..."
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 py-1.5 text-xs font-medium text-slate-800 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
               />
             </div>
@@ -379,42 +444,109 @@ export const PurchaseManagement: React.FC = () => {
                 <th className="p-3 font-semibold border-r border-slate-200 dark:border-slate-800">Supplier Name</th>
                 <th className="p-3 font-semibold border-r border-slate-200 dark:border-slate-800">Vendor Ref</th>
                 <th className="p-3 font-semibold border-r border-slate-200 dark:border-slate-800">Date</th>
+                <th className="p-3 font-semibold text-center border-r border-slate-200 dark:border-slate-800">Items</th>
                 <th className="p-3 font-semibold text-right border-r border-slate-200 dark:border-slate-800">Bill Total</th>
                 <th className="p-3 font-semibold text-right border-r border-slate-200 dark:border-slate-800">Cash Paid</th>
-                <th className="p-3 font-semibold text-right">Vendor Udharo</th>
+                <th className="p-3 font-semibold text-right border-r border-slate-200 dark:border-slate-800">Vendor Udharo</th>
+                <th className="p-3 font-semibold text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800/80">
               {filteredPurchases.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-400">
-                    No purchase logs found. Click "Log New Stock Purchase" to record wholesale inventory inflow.
+                  <td colSpan={9} className="p-6 text-center text-slate-400">
+                    No purchase logs found in Supabase database. Click "Log Purchase" to record wholesale inventory inflow.
                   </td>
                 </tr>
               ) : (
-                filteredPurchases.map((pur) => (
-                  <tr key={pur.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800/80 last:border-b-0">
-                    <td className="p-3 font-mono font-bold text-indigo-600 dark:text-indigo-400 border-r border-slate-200 dark:border-slate-800/80">
-                      {pur.purchaseNo}
-                    </td>
-                    <td className="p-3 font-semibold text-slate-900 dark:text-slate-100 border-r border-slate-200 dark:border-slate-800/80">
-                      {pur.supplierName}
-                    </td>
-                    <td className="p-3 font-mono text-slate-500 border-r border-slate-200 dark:border-slate-800/80">{pur.invoiceRef}</td>
-                    <td className="p-3 text-slate-500 border-r border-slate-200 dark:border-slate-800/80">
-                      {new Date(pur.purchaseDate).toLocaleDateString()}
-                    </td>
-                    <td className="p-3 text-right font-extrabold text-slate-900 dark:text-slate-100 border-r border-slate-200 dark:border-slate-800/80">
-                      NPR {pur.totalAmount.toLocaleString()}
-                    </td>
-                    <td className="p-3 text-right font-semibold text-emerald-600 dark:text-emerald-400 border-r border-slate-200 dark:border-slate-800/80">
-                      NPR {pur.cashPaid.toLocaleString()}
-                    </td>
-                    <td className="p-3 text-right font-extrabold text-amber-600 dark:text-amber-400">
-                      {pur.supplierCredit > 0 ? `NPR ${pur.supplierCredit.toLocaleString()}` : 'Cleared'}
-                    </td>
-                  </tr>
-                ))
+                filteredPurchases.map((pur) => {
+                  const isExpanded = expandedRowId === pur.id;
+                  return (
+                    <React.Fragment key={pur.id}>
+                      <tr className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800/80 last:border-b-0">
+                        <td className="p-3 font-mono font-bold text-indigo-600 dark:text-indigo-400 border-r border-slate-200 dark:border-slate-800/80">
+                          <button
+                            onClick={() => setExpandedRowId(isExpanded ? null : pur.id)}
+                            className="flex items-center gap-1 hover:underline text-left"
+                          >
+                            {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                            <span>{pur.purchaseNo}</span>
+                          </button>
+                        </td>
+                        <td className="p-3 font-semibold text-slate-900 dark:text-slate-100 border-r border-slate-200 dark:border-slate-800/80">
+                          {pur.supplierName}
+                        </td>
+                        <td className="p-3 font-mono text-slate-500 border-r border-slate-200 dark:border-slate-800/80">{pur.invoiceRef || 'REF-N/A'}</td>
+                        <td className="p-3 text-slate-500 border-r border-slate-200 dark:border-slate-800/80">
+                          {new Date(pur.purchaseDate).toLocaleDateString()}
+                        </td>
+                        <td className="p-3 text-center border-r border-slate-200 dark:border-slate-800/80 font-medium text-slate-600 dark:text-slate-400">
+                          {pur.items.length} items ({pur.items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)} pcs)
+                        </td>
+                        <td className="p-3 text-right font-extrabold text-slate-900 dark:text-slate-100 border-r border-slate-200 dark:border-slate-800/80">
+                          NPR {pur.totalAmount.toLocaleString()}
+                        </td>
+                        <td className="p-3 text-right font-semibold text-emerald-600 dark:text-emerald-400 border-r border-slate-200 dark:border-slate-800/80">
+                          NPR {pur.cashPaid.toLocaleString()}
+                        </td>
+                        <td className="p-3 text-right font-extrabold border-r border-slate-200 dark:border-slate-800/80">
+                          {pur.supplierCredit > 0 ? (
+                            <span className="text-amber-600 dark:text-amber-400 font-extrabold">
+                              NPR {pur.supplierCredit.toLocaleString()}
+                            </span>
+                          ) : (
+                            <span className="text-emerald-600 dark:text-emerald-400">Cleared</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-center">
+                          <button
+                            onClick={() => setViewingPurchase(pur)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 dark:hover:bg-indigo-900 transition"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            <span>View Bill</span>
+                          </button>
+                        </td>
+                      </tr>
+
+                      {/* Expandable item lines */}
+                      {isExpanded && (
+                        <tr className="bg-slate-50/70 dark:bg-slate-800/30">
+                          <td colSpan={9} className="p-4">
+                            <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                              <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-2">
+                                Items in Purchase {pur.purchaseNo} ({pur.supplierName}):
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                                {pur.items.map((it, itemIdx) => (
+                                  <div
+                                    key={itemIdx}
+                                    className="rounded-lg border border-slate-100 bg-slate-50/80 p-2 dark:border-slate-800 dark:bg-slate-800/60 text-xs"
+                                  >
+                                    <div className="font-bold text-slate-900 dark:text-slate-100">
+                                      {it.productName}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono">
+                                      Barcode: {it.barcode || it.sku || 'N/A'}
+                                    </div>
+                                    <div className="flex justify-between items-center mt-1 text-[11px]">
+                                      <span>
+                                        {it.quantity} {it.unitName} × NPR {it.costPrice}
+                                      </span>
+                                      <span className="font-extrabold text-indigo-600 dark:text-indigo-400">
+                                        NPR {it.totalAmount.toLocaleString()}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -440,6 +572,13 @@ export const PurchaseManagement: React.FC = () => {
               </button>
             </div>
 
+            {/* SCAN NOTIFICATION BANNER INSIDE MODAL */}
+            {scanNotification && (
+              <div className="mx-6 mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs font-medium text-indigo-900 shadow-2xs dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-200 animate-in fade-in duration-200">
+                {scanNotification}
+              </div>
+            )}
+
             <form onSubmit={handleSubmitPurchase} className="p-6 space-y-5">
               {/* Supplier & Ref Form */}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -458,7 +597,7 @@ export const PurchaseManagement: React.FC = () => {
                   />
                   <datalist id="supplier-options">
                     {suppliers.map((s) => (
-                      <option key={s.id} value={s.name} label={`[${s.id.toUpperCase()}] ${s.phone}`} />
+                      <option key={s.id} value={s.name} label={`[${s.id.toUpperCase()}] ${s.phone || ''}`} />
                     ))}
                   </datalist>
                 </div>
@@ -490,6 +629,38 @@ export const PurchaseManagement: React.FC = () => {
                 </div>
               </div>
 
+              {/* Quick Barcode Scanner Bar */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/60">
+                <div className="flex items-center gap-2">
+                  <Barcode className="h-4 w-4 text-indigo-500 shrink-0" />
+                  <input
+                    type="text"
+                    value={quickScanInput}
+                    onChange={(e) => setQuickScanInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        processScannedOrTypedCode(quickScanInput, null);
+                        setQuickScanInput('');
+                      }
+                    }}
+                    placeholder="Scan Barcode or Type Product Name/SKU to auto-fill..."
+                    className="w-full bg-transparent text-xs font-medium text-slate-900 dark:text-slate-100 outline-none placeholder:text-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveScanRowIndex('QUICK');
+                      setIsScannerOpen(true);
+                    }}
+                    className="flex items-center gap-1 shrink-0 rounded-lg bg-indigo-50 border border-indigo-200 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950 dark:text-indigo-300"
+                  >
+                    <Camera className="h-3.5 w-3.5" />
+                    <span>Camera</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Items Table */}
               <div className="space-y-4 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -498,403 +669,256 @@ export const PurchaseManagement: React.FC = () => {
                       Stock Items Received
                     </label>
                     <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                      ⚡ Scan barcode or select existing product — auto-fills Name, Code, Buying Price & Selling Price!
+                      ⚡ Entering new items here auto-saves them into your inventory catalog!
                     </p>
-                  </div>
-
-                  {/* Camera Barcode Scan & Quick Search Button Bar */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveScanRowIndex('QUICK');
-                        setIsScannerOpen(true);
-                      }}
-                      className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 transition active:scale-95"
-                      id="scan-barcode-camera-btn"
-                    >
-                      <Camera className="h-3.5 w-3.5" />
-                      <span>Scan Barcode Camera</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Quick Scan / Manual Type Search Bar */}
-                <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/60 p-2 dark:border-indigo-900/50 dark:bg-indigo-950/30">
-                  <div className="relative flex-1">
-                    <Barcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-indigo-600 dark:text-indigo-400" />
-                    <input
-                      type="text"
-                      value={quickScanInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setQuickScanInput(val);
-                        // Auto-detect 13-digit EAN/UPC/GTIN barcode automatically
-                        if (/^\d{13}$/.test(val.trim())) {
-                          processScannedOrTypedCode(val.trim());
-                          setQuickScanInput('');
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          processScannedOrTypedCode(quickScanInput);
-                          setQuickScanInput('');
-                        }
-                      }}
-                      placeholder="Type or scan 13-digit Barcode / Product Code / SKU..."
-                      className="w-full rounded-lg border border-indigo-200 bg-white pl-9 pr-3 py-1.5 text-xs font-mono font-bold text-slate-900 outline-none focus:border-indigo-600 dark:border-indigo-800 dark:bg-slate-900 dark:text-slate-100"
-                    />
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      processScannedOrTypedCode(quickScanInput);
-                      setQuickScanInput('');
-                    }}
-                    className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700"
+                    onClick={addItemRow}
+                    className="flex items-center gap-1 self-start sm:self-auto rounded-lg bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-950 dark:text-indigo-300 dark:hover:bg-indigo-900"
                   >
-                    <Check className="h-3.5 w-3.5" />
-                    <span>Auto-Fill</span>
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Add Another Item Row</span>
                   </button>
                 </div>
 
-                {/* Transient Scan Notification Toast */}
-                {scanNotification && (
-                  <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-2.5 text-xs font-semibold text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-200 shadow-xs transition">
-                    {scanNotification}
-                  </div>
-                )}
-
-                {/* Item Rows Cards */}
                 <div className="space-y-3">
                   {purchaseItems.map((item, index) => (
                     <div
                       key={index}
-                      className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/40 shadow-xs"
+                      className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-3 dark:border-slate-800 dark:bg-slate-800/40"
                     >
-                      {/* Row Top: Barcode / Code + Name + Scan Button */}
-                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-                        {/* Barcode / SKU Input */}
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
                         <div className="sm:col-span-4 space-y-1">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
-                            <span>Barcode / Product Code</span>
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                            Product Name *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            list={`catalog-options-${index}`}
+                            value={item.productName}
+                            onChange={(e) => handleSelectExistingProduct(index, e.target.value)}
+                            placeholder="e.g. Wai Wai Noodles 75g"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          />
+                          <datalist id={`catalog-options-${index}`}>
+                            {products.map((p) => (
+                              <option key={p.id} value={p.name} label={`[Stock: ${p.stockQty}] Cost: NPR ${p.unit?.primaryCostPrice ?? 0}`} />
+                            ))}
+                          </datalist>
+                        </div>
+
+                        <div className="sm:col-span-3 space-y-1">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                              Barcode / SKU
+                            </label>
                             <button
                               type="button"
                               onClick={() => {
                                 setActiveScanRowIndex(index);
                                 setIsScannerOpen(true);
                               }}
-                              className="text-indigo-600 dark:text-indigo-400 flex items-center gap-0.5 hover:underline text-[10px] font-bold"
+                              className="text-[10px] text-indigo-600 hover:underline flex items-center gap-0.5"
                             >
-                              <Camera className="h-3 w-3" />
-                              <span>Scan</span>
+                              <Camera className="h-3 w-3" /> Scan
                             </button>
-                          </label>
-                          <div className="relative">
-                            <input
-                              type="text"
-                              value={item.barcode || item.sku}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                const updated = [...purchaseItems];
-                                updated[index].barcode = val;
-                                updated[index].sku = val;
-                                setPurchaseItems(updated);
-                              }}
-                              onBlur={(e) => {
-                                if (e.target.value.trim()) {
-                                  processScannedOrTypedCode(e.target.value, index);
-                                }
-                              }}
-                              placeholder="Barcode or SKU..."
-                              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-mono font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                            />
                           </div>
-                        </div>
-
-                        {/* Item Name */}
-                        <div className="sm:col-span-7 space-y-1">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                            Product Name *
-                          </label>
                           <input
                             type="text"
-                            required
-                            list={`product-options-${index}`}
-                            value={item.productName}
+                            value={item.barcode || item.sku}
                             onChange={(e) => {
-                              const nameVal = e.target.value;
-                              handleSelectExistingProduct(index, nameVal);
+                              const val = e.target.value;
+                              const updated = [...purchaseItems];
+                              updated[index].barcode = val;
+                              updated[index].sku = val;
+                              setPurchaseItems(updated);
                             }}
-                            placeholder="Type product name or select from catalog..."
-                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            placeholder="Scan or type barcode"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-mono text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                           />
-                          <datalist id={`product-options-${index}`}>
-                            {products.map((p) => (
-                              <option
-                                key={p.id}
-                                value={p.name}
-                                label={`[${p.id.toUpperCase()}] Buying: NPR ${p.unit.primaryCostPrice} | Selling: NPR ${p.unit.primarySellingPrice}`}
-                              />
-                            ))}
-                          </datalist>
                         </div>
 
-                        {/* Delete Row Button */}
-                        <div className="sm:col-span-1 text-right flex sm:justify-end items-center pt-2 sm:pt-0">
-                          <button
-                            type="button"
-                            onClick={() => removeItemRow(index)}
-                            className="p-1 text-slate-400 hover:text-red-500 transition"
-                            title="Remove row"
+                        <div className="sm:col-span-2 space-y-1">
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                            Unit
+                          </label>
+                          <select
+                            value={item.unitName}
+                            onChange={(e) => {
+                              const updated = [...purchaseItems];
+                              updated[index].unitName = e.target.value;
+                              setPurchaseItems(updated);
+                            }}
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                           >
-                            ✕
-                          </button>
+                            <option value="Packet">Packet</option>
+                            <option value="Piece">Piece</option>
+                            <option value="Kg">Kg</option>
+                            <option value="Box">Box</option>
+                            <option value="Carton">Carton</option>
+                            <option value="Liter">Liter</option>
+                            <option value="Gram">Gram</option>
+                            <option value="Dozen">Dozen</option>
+                          </select>
                         </div>
-                      </div>
 
-                      {/* Row Bottom: Quantity, Buying Price (Cost), Selling Price, Subtotal */}
-                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
-                        {/* Quantity */}
-                        <div className="sm:col-span-3 space-y-1">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                            Quantity ({item.unitName || 'Pcs'})
+                        <div className="sm:col-span-2 space-y-1">
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                            Quantity *
                           </label>
                           <input
-                            type="text"
-                            inputMode="decimal"
+                            type="number"
+                            min="0.01"
+                            step="any"
+                            required
                             value={item.quantity}
                             onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                                const updated = [...purchaseItems];
-                                updated[index].quantity = val;
-                                setPurchaseItems(updated);
-                              }
+                              const updated = [...purchaseItems];
+                              updated[index].quantity = e.target.value;
+                              setPurchaseItems(updated);
                             }}
-                            onBlur={(e) => {
-                              if (!e.target.value || Number(e.target.value) <= 0) {
-                                const updated = [...purchaseItems];
-                                updated[index].quantity = 1;
-                                setPurchaseItems(updated);
-                              }
-                            }}
-                            placeholder="1"
-                            className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                           />
                         </div>
 
-                        {/* Cost Price (Buying Price) */}
-                        <div className="sm:col-span-3 space-y-1">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                            Buying Cost (NPR) *
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={item.costPrice}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                                const updated = [...purchaseItems];
-                                updated[index].costPrice = val;
-                                setPurchaseItems(updated);
-                              }
-                            }}
-                            placeholder="0"
-                            className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-right text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                          />
-                        </div>
-
-                        {/* Selling Price */}
-                        <div className="sm:col-span-3 space-y-1">
-                          <label className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
-                            Selling Price (NPR)
-                          </label>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={item.sellingPrice}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                                const updated = [...purchaseItems];
-                                updated[index].sellingPrice = val;
-                                setPurchaseItems(updated);
-                              }
-                            }}
-                            placeholder="0"
-                            className="no-spinner w-full rounded-lg border border-indigo-200 bg-indigo-50/50 px-2.5 py-1.5 text-right text-xs font-bold text-indigo-700 outline-none focus:border-indigo-600 dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-300"
-                          />
-                        </div>
-
-                        {/* Line Subtotal */}
-                        <div className="sm:col-span-3 text-right space-y-1">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                            Subtotal
-                          </label>
-                          <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
-                            NPR {((Number(item.quantity) || 0) * (Number(item.costPrice) || 0)).toLocaleString()}
-                          </span>
+                        <div className="sm:col-span-1 flex justify-center pb-1">
+                          {purchaseItems.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeItemRow(index)}
+                              className="text-slate-400 hover:text-rose-500 p-1 transition"
+                            >
+                              ✕
+                            </button>
+                          )}
                         </div>
                       </div>
 
-                      {/* Optional Box / Carton Details Section */}
-                      <div className="pt-2 border-t border-dashed border-slate-200 dark:border-slate-700/60">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1">
-                            <Package className="h-3 w-3" />
-                            <span>Optional Carton / Box Packaging Details</span>
-                          </span>
-                          <span className="text-[9px] text-slate-400 italic">Optional</span>
+                      {/* Pricing Row */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/60 dark:border-slate-800/60">
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                            Buying Cost Price (NPR) *
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            required
+                            value={item.costPrice}
+                            onChange={(e) => {
+                              const updated = [...purchaseItems];
+                              updated[index].costPrice = e.target.value;
+                              setPurchaseItems(updated);
+                            }}
+                            placeholder="e.g. 18.00"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          />
                         </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          <div>
-                            <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Box Barcode</label>
-                            <input
-                              type="text"
-                              value={item.cartonBarcode || ''}
-                              onChange={(e) => {
-                                const updated = [...purchaseItems];
-                                updated[index].cartonBarcode = e.target.value;
-                                setPurchaseItems(updated);
-                              }}
-                              placeholder="e.g. 890123...BOX"
-                              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-mono text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-bold text-slate-500 block mb-0.5">1 Box = Pcs</label>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              value={item.conversionRatio ?? ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === '' || /^\d*$/.test(val)) {
-                                  const updated = [...purchaseItems];
-                                  updated[index].conversionRatio = val;
-                                  setPurchaseItems(updated);
-                                }
-                              }}
-                              placeholder="e.g. 24"
-                              className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Box Buy Price</label>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              value={item.secondaryCostPrice ?? ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                                  const updated = [...purchaseItems];
-                                  updated[index].secondaryCostPrice = val;
-                                  setPurchaseItems(updated);
-                                }
-                              }}
-                              placeholder="Box Cost Price"
-                              className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Box Sell Price</label>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              value={item.secondarySellingPrice ?? ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                                  const updated = [...purchaseItems];
-                                  updated[index].secondarySellingPrice = val;
-                                  setPurchaseItems(updated);
-                                }
-                              }}
-                              placeholder="Box Selling Price"
-                              className="no-spinner w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-indigo-600 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-indigo-400"
-                            />
-                          </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                            Store Selling Price (NPR)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={item.sellingPrice}
+                            onChange={(e) => {
+                              const updated = [...purchaseItems];
+                              updated[index].sellingPrice = e.target.value;
+                              setPurchaseItems(updated);
+                            }}
+                            placeholder="e.g. 20.00"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-600 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-emerald-400"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between sm:justify-end sm:gap-4 self-end pb-1.5 text-xs">
+                          <span className="text-slate-500 font-medium">Row Subtotal:</span>
+                          <span className="font-extrabold text-slate-900 dark:text-slate-100">
+                            NPR {((Number(item.quantity) || 0) * (Number(item.costPrice) || 0)).toLocaleString()}
+                          </span>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
-
-                <button
-                  type="button"
-                  onClick={addItemRow}
-                  className="flex items-center gap-1.5 rounded-xl border border-dashed border-indigo-300 bg-white px-3.5 py-2 text-xs font-bold text-indigo-600 hover:bg-indigo-50 dark:border-indigo-800 dark:bg-slate-800 dark:text-indigo-400 transition"
-                >
-                  <Plus className="h-4 w-4" />
-                  <span>Add Another Item Row</span>
-                </button>
               </div>
 
-              {/* Payment Settlement Breakdown */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950 space-y-3">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="font-bold text-slate-700 dark:text-slate-300">
-                    Total Wholesale Purchase Amount:
-                  </span>
-                  <span className="text-base font-extrabold text-slate-900 dark:text-slate-100">
-                    NPR {totalPurchaseBill.toLocaleString()}
-                  </span>
+              {/* Settlement Summary */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Purchase Notes / Remarks
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={notesInput}
+                    onChange={(e) => setNotesInput(e.target.value)}
+                    placeholder="e.g. Delivered via truck, credit payable in 15 days"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 resize-none"
+                  />
                 </div>
 
-                <div className="flex justify-between items-center gap-4 text-xs">
-                  <span className="font-bold text-emerald-700 dark:text-emerald-400">
-                    Cash Paid to Vendor Now:
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs font-bold text-slate-500">NPR</span>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 dark:border-slate-800 dark:bg-slate-800/60">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-500 font-medium">Total Bill Amount:</span>
+                    <span className="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                      NPR {totalPurchaseBill.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center gap-3">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Cash Paid Now (NPR):
+                    </span>
                     <input
-                      type="text"
-                      inputMode="decimal"
+                      type="number"
+                      min="0"
+                      step="any"
                       value={cashPaidInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                          setCashPaidInput(val);
-                        }
-                      }}
+                      onChange={(e) => setCashPaidInput(e.target.value)}
                       placeholder="0"
-                      className="no-spinner w-32 rounded-lg border border-slate-200 bg-white px-3 py-1 text-right font-bold text-xs text-slate-900 outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 focus:border-indigo-500"
+                      className="w-32 text-right rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-emerald-600 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-emerald-400"
                     />
                   </div>
-                </div>
 
-
-                <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <span className="font-bold text-amber-700 dark:text-amber-400">
-                    Pending Udharo Credit to Supplier:
-                  </span>
-                  <span className="font-extrabold text-amber-600 dark:text-amber-400">
-                    NPR {supplierUdharoCredit.toLocaleString()}
-                  </span>
+                  <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-200 dark:border-slate-700">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      Supplier Udharo (Credit):
+                    </span>
+                    <span
+                      className={`text-sm font-extrabold ${
+                        supplierUdharoCredit > 0
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-emerald-600 dark:text-emerald-400'
+                      }`}
+                    >
+                      {supplierUdharoCredit > 0 ? `NPR ${supplierUdharoCredit.toLocaleString()}` : 'Cleared'}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+              {/* Submit Button */}
+              <div className="flex justify-end gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="rounded-xl border border-slate-300 px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                  className="rounded-xl border border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                 >
                   Cancel
                 </button>
-
                 <button
                   type="submit"
-                  className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-2.5 text-xs font-bold text-white shadow-md transition hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600"
-                  id="confirm-stock-purchase-btn"
+                  className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 active:bg-indigo-800 dark:bg-indigo-500 dark:hover:bg-indigo-600"
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  <span>Log Purchase & Update Stock</span>
+                  <span>Record Stock Purchase</span>
                 </button>
               </div>
             </form>
@@ -902,7 +926,124 @@ export const PurchaseManagement: React.FC = () => {
         </div>
       )}
 
-      {/* Barcode Camera Scanner Modal */}
+      {/* VIEW & PRINT PURCHASE BILL MODAL */}
+      {viewingPurchase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+              <div className="flex items-center gap-2">
+                <Truck className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm">
+                    Stock Purchase Voucher #{viewingPurchase.purchaseNo}
+                  </h3>
+                  <p className="text-[10px] text-slate-500">
+                    Vendor Ref: {viewingPurchase.invoiceRef || 'N/A'} • {new Date(viewingPurchase.purchaseDate).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setViewingPurchase(null)}
+                className="rounded-xl p-1 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto" id="printable-purchase-bill">
+              {/* Store & Supplier Header */}
+              <div className="text-center pb-3 border-b border-slate-200 dark:border-slate-800">
+                <h4 className="font-extrabold text-base text-slate-900 dark:text-slate-100">
+                  {shopProfile.shopName || 'Main Store'}
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Phone: {shopProfile.phone || 'N/A'} | PAN/VAT: {shopProfile.panVatNo || 'N/A'}
+                </p>
+                <div className="mt-2 inline-block rounded-md bg-purple-100 px-2.5 py-0.5 text-[10px] font-bold text-purple-800 dark:bg-purple-950 dark:text-purple-300">
+                  WHOLESALE STOCK PURCHASE BILL
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs space-y-1.5 dark:border-slate-700 dark:bg-slate-800">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Supplier Name:</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{viewingPurchase.supplierName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Vendor Ref No:</span>
+                  <span className="font-bold font-mono text-slate-800 dark:text-slate-200">{viewingPurchase.invoiceRef || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Purchase Date:</span>
+                  <span className="font-medium text-slate-800 dark:text-slate-200">{new Date(viewingPurchase.purchaseDate).toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Cash Paid:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">NPR {viewingPurchase.cashPaid.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Supplier Credit (Udharo):</span>
+                  <span className="font-bold text-amber-600 dark:text-amber-400">
+                    {viewingPurchase.supplierCredit > 0 ? `NPR ${viewingPurchase.supplierCredit.toLocaleString()}` : 'Cleared'}
+                  </span>
+                </div>
+                {viewingPurchase.performedBy && (
+                  <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-700">
+                    <span className="text-slate-500">Logged By:</span>
+                    <span className="font-semibold text-indigo-600 dark:text-indigo-400">{viewingPurchase.performedBy}</span>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h5 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2">Item Breakdown</h5>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                  {viewingPurchase.items.map((item, idx) => (
+                    <div key={idx} className="flex justify-between p-2.5 text-xs bg-white dark:bg-slate-900">
+                      <div>
+                        <div className="font-bold text-slate-900 dark:text-slate-100">{item.productName}</div>
+                        <div className="text-[10px] text-slate-500">
+                          {item.quantity} {item.unitName} × NPR {item.costPrice.toLocaleString()} (Sell: NPR {item.sellingPrice})
+                        </div>
+                      </div>
+                      <div className="font-extrabold text-slate-900 dark:text-slate-100">
+                        NPR {item.totalAmount.toLocaleString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-800 text-sm font-extrabold">
+                <span className="text-slate-700 dark:text-slate-300">Total Purchase Amount</span>
+                <span className="text-indigo-600 dark:text-indigo-400">NPR {viewingPurchase.totalAmount.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-slate-200 dark:border-slate-800 p-4 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center">
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-800 shadow-xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                <Printer className="h-4 w-4" />
+                <span>Print Bill</span>
+              </button>
+
+              <button
+                onClick={() => setViewingPurchase(null)}
+                className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-white hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BARCODE SCANNER MODAL */}
       <BarcodeScannerModal
         isOpen={isScannerOpen}
         onClose={() => {
@@ -910,7 +1051,6 @@ export const PurchaseManagement: React.FC = () => {
           setActiveScanRowIndex(null);
         }}
         onScanSuccess={handleScanSuccess}
-        title="Scan Item Barcode for Purchase"
       />
     </div>
   );

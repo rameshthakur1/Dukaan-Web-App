@@ -181,29 +181,33 @@ export const DashboardView: React.FC = () => {
 
   // Helper to filter stock purchases by date for KPI metrics
   const getKpiFilteredPurchases = (): StockPurchase[] => {
+    if (!purchases || purchases.length === 0) return [];
     if (dateFilter === 'ALL') return purchases;
 
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
 
     return purchases.filter((p) => {
+      if (!p) return false;
       if (!p.purchaseDate) return true;
       const pDate = new Date(p.purchaseDate);
+      if (isNaN(pDate.getTime())) return true;
       const pDateStr = p.purchaseDate.split('T')[0];
+      const diffMs = now.getTime() - pDate.getTime();
 
       switch (dateFilter) {
         case 'DAILY':
-          return pDateStr === todayStr || (now.getTime() - pDate.getTime()) <= 86400000;
+          return pDateStr === todayStr || Math.abs(diffMs) <= 86400000;
         case 'WEEKLY':
-          return (now.getTime() - pDate.getTime()) <= 7 * 86400000;
+          return diffMs <= 7 * 86400000 || pDateStr >= new Date(now.getTime() - 7 * 86400000).toISOString().split('T')[0];
         case 'MONTHLY':
-          return (now.getTime() - pDate.getTime()) <= 30 * 86400000;
+          return diffMs <= 30 * 86400000 || pDateStr >= new Date(now.getTime() - 30 * 86400000).toISOString().split('T')[0];
         case '3_MONTH':
-          return (now.getTime() - pDate.getTime()) <= 90 * 86400000;
+          return diffMs <= 90 * 86400000 || pDateStr >= new Date(now.getTime() - 90 * 86400000).toISOString().split('T')[0];
         case '6_MONTH':
-          return (now.getTime() - pDate.getTime()) <= 180 * 86400000;
+          return diffMs <= 180 * 86400000 || pDateStr >= new Date(now.getTime() - 180 * 86400000).toISOString().split('T')[0];
         case 'YEARLY':
-          return (now.getTime() - pDate.getTime()) <= 365 * 86400000;
+          return diffMs <= 365 * 86400000 || pDateStr >= new Date(now.getTime() - 365 * 86400000).toISOString().split('T')[0];
         case 'CUSTOM': {
           let valid = true;
           if (customStartDate) valid = valid && pDateStr >= customStartDate;
@@ -227,7 +231,22 @@ export const DashboardView: React.FC = () => {
   const kpiTotalQr = kpiInvoices.reduce((sum, inv) => sum + (inv.splitPayment?.qr || 0), 0);
   const kpiTotalUdharo = kpiInvoices.reduce((sum, inv) => sum + (inv.splitPayment?.udharo || 0), 0);
   const kpiTotalExpenses = kpiExpenses.reduce((sum, exp) => sum + exp.amount, 0);
-  const kpiTotalPurchases = kpiPurchases.reduce((sum, p) => sum + (p.totalAmount || 0), 0);
+  const kpiTotalPurchases = kpiPurchases.reduce((sum, p) => {
+    const rawTotal =
+      Number(p.totalAmount) ||
+      Number((p as any).total_amount) ||
+      Number((p as any).grand_total) ||
+      Number((p as any).amount) ||
+      (Array.isArray(p.items)
+        ? p.items.reduce((itemSum, it: any) => {
+            const qty = Number(it.quantity ?? it.qty ?? 1);
+            const cost = Number(it.costPrice ?? it.purchasePrice ?? it.purchase_price ?? it.cost_price ?? it.unitPrice ?? 0);
+            const sub = Number(it.totalAmount ?? it.total_amount ?? it.subtotal ?? (qty * cost));
+            return itemSum + sub;
+          }, 0)
+        : 0);
+    return sum + (rawTotal || 0);
+  }, 0);
   const kpiNetOperatingProfit = kpiTotalProfit - kpiTotalExpenses;
 
   const profitMarginPercent = kpiTotalRevenue > 0 ? ((kpiTotalProfit / kpiTotalRevenue) * 100).toFixed(1) : '0';
@@ -774,12 +793,9 @@ export const DashboardView: React.FC = () => {
         </div>
 
         {/* Card 5: Stock Purchases */}
-        <div
-          onClick={() => setActiveTab('purchases')}
-          className="flex flex-col justify-between rounded-xl sm:rounded-2xl border border-blue-200 bg-blue-50/40 p-2.5 sm:p-4 shadow-2xs dark:border-blue-900/50 dark:bg-slate-900/90 cursor-pointer hover:border-blue-300 dark:hover:border-blue-800 transition active:scale-98"
-        >
+        <div className="flex flex-col justify-between rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-2.5 sm:p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center justify-between gap-1">
-            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-tight sm:tracking-wider text-blue-700 dark:text-blue-400 truncate">
+            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-tight sm:tracking-wider text-slate-500 truncate">
               Stock Purchases
             </span>
             <div className="flex h-6 w-6 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-950 dark:text-blue-400">
@@ -790,8 +806,8 @@ export const DashboardView: React.FC = () => {
             <h3 className="text-xs sm:text-xl font-bold text-blue-600 dark:text-blue-400 truncate">
               NPR {kpiTotalPurchases.toLocaleString()}
             </h3>
-            <p className="text-[8px] sm:text-[10px] text-blue-700 dark:text-blue-300 font-semibold mt-0.5 sm:mt-1 flex items-center gap-0.5 truncate">
-              <span className="truncate">Stock Buy Inflow ({kpiPurchases.length} logs)</span>
+            <p className="text-[8px] sm:text-[10px] text-slate-500 mt-0.5 sm:mt-1 truncate">
+              Stock Buy Inflow ({kpiPurchases.length} logs)
             </p>
           </div>
         </div>
@@ -800,7 +816,7 @@ export const DashboardView: React.FC = () => {
         <div className="flex flex-col justify-between rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-2.5 sm:p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
           <div className="flex items-center justify-between gap-1">
             <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-tight sm:tracking-wider text-slate-500 truncate">
-              Customer Udharo
+              Customer Udharo (Due)
             </span>
             <div className="flex h-6 w-6 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded-lg sm:rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
               <CreditCard className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
@@ -808,10 +824,12 @@ export const DashboardView: React.FC = () => {
           </div>
           <div className="mt-1.5 sm:mt-2">
             <h3 className="text-xs sm:text-xl font-bold text-amber-600 dark:text-amber-400 truncate">
-              NPR {kpiTotalUdharo.toLocaleString()}
+              NPR {pendingCustomerUdharo.toLocaleString()}
             </h3>
             <p className="text-[8px] sm:text-[10px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5 sm:mt-1 truncate">
-              Khata issued in period
+              {pendingCustomerUdharo > 0
+                ? `${customers.filter((c) => c.currentBalance > 0).length} owe credit`
+                : 'All khata cleared'}
             </p>
           </div>
         </div>
