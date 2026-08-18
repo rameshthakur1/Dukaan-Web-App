@@ -52,7 +52,7 @@ import { ShopExpensesModal } from './ShopExpensesModal';
 import { ReportPdfModal } from './ReportPdfModal';
 
 export const DashboardView: React.FC = () => {
-  const { invoices, products, customers, suppliers, expenses, purchases, setActiveTab, triggerCloudBackup, shopProfile, currentUser } = useApp();
+  const { invoices, products, customers, suppliers, expenses, purchases, setActiveTab, triggerCloudBackup, shopProfile, currentUser, activeShopCode, activeShopName } = useApp();
 
   // Shop Expenses modal state
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
@@ -245,8 +245,8 @@ export const DashboardView: React.FC = () => {
   const pendingCustomerUdharo = customers.reduce((sum, c) => sum + c.currentBalance, 0);
 
   // Shop specific performance intelligence calculations
-  const currentShopName = currentUser?.shopName || shopProfile.shopName || 'My Store';
-  const currentShopCode = currentUser?.shopCode || shopProfile.shopCode || 'SHOP-1001';
+  const currentShopName = activeShopName;
+  const currentShopCode = activeShopCode;
 
   // Calculate top product category for this shop
   const topCategoryData = useMemo(() => {

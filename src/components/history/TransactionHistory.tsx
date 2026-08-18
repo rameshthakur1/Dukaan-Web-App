@@ -57,7 +57,7 @@ interface ActivityItem {
 }
 
 export const TransactionHistory: React.FC = () => {
-  const { invoices, purchases, khataTransactions, expenses, auditLogs } = useApp();
+  const { invoices, purchases, khataTransactions, expenses, auditLogs, activeShopName } = useApp();
 
   // Active Main View Tab
   const [mainTab, setMainTab] = useState<'INVOICES' | 'ACTIVITIES' | 'AUDIT_TRAIL'>('INVOICES');
@@ -130,7 +130,7 @@ export const TransactionHistory: React.FC = () => {
       itemCount: inv.items.reduce((sum, item) => sum + item.quantity, 0),
       totalAmount: inv.netAmount,
       paymentStatus: inv.paymentStatus,
-      performedBy: inv.cashierName || 'Store Owner',
+      performedBy: inv.cashierName || inv.shopName || activeShopName || 'Store Staff',
       rawInvoice: inv,
     }));
 
@@ -202,7 +202,7 @@ export const TransactionHistory: React.FC = () => {
         isPositive: true,
         timestamp: inv.createdAt,
         details: `${inv.items.length} items (${inv.items.reduce((s, i) => s + i.quantity, 0)} pcs) • Cash/QR: NPR ${(inv.splitPayment.cash + inv.splitPayment.qr).toLocaleString()}`,
-        performedBy: inv.cashierName || 'Store Owner',
+        performedBy: inv.cashierName || inv.shopName || activeShopName || 'Store Staff',
         referenceNo: inv.invoiceNo,
       });
     });

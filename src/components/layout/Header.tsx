@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { isAnnouncementTargetedToUser } from '../../utils/announcementUtils';
 import {
@@ -8,6 +8,10 @@ import {
   User,
   ShieldCheck,
   Store,
+  WifiOff,
+  RefreshCw,
+  ChevronDown,
+  Building2,
 } from 'lucide-react';
 
 export const Header: React.FC = () => {
@@ -22,18 +26,41 @@ export const Header: React.FC = () => {
     products,
     logout,
     currentUser,
+    registeredUsers,
     adminViewMode,
     setAdminViewMode,
     impersonatedUser,
+    startImpersonatingStore,
     stopImpersonatingStore,
+    switchActiveStore,
     systemAnnouncements,
+    activeShopCode,
+    activeShopName,
+    activeOwnerName,
+    isBackgroundFetching,
+    isOfflineMode,
+    pendingOfflineCount,
+    flushOfflineQueue,
   } = useApp();
+
+  const [isStoreSwitcherOpen, setIsStoreSwitcherOpen] = useState(false);
+  const [isSyncingOffline, setIsSyncingOffline] = useState(false);
 
   const lowStockCount = products.filter((p) => p.stockQty <= p.minStockAlert).length;
   const effectiveUser = impersonatedUser || currentUser;
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
-  const currentShopName = effectiveUser?.shopName || (shopProfile.shopName && shopProfile.shopName !== 'My Store' && shopProfile.shopName !== 'Dukaan.io Corporate HQ' ? shopProfile.shopName : (isSuperAdmin ? 'Dukaan.io Corporate HQ' : 'My Store'));
-  const currentShopCode = effectiveUser?.shopCode || (shopProfile.shopCode && shopProfile.shopCode !== 'SHOP-0001' && shopProfile.shopCode !== 'DUKAAN-8821' ? shopProfile.shopCode : (isSuperAdmin ? 'DUKAAN-8821' : 'SHOP-01'));
+  const currentShopName = activeShopName;
+  const currentShopCode = activeShopCode;
+
+  const handleManualSync = async () => {
+    if (isSyncingOffline) return;
+    setIsSyncingOffline(true);
+    try {
+      await flushOfflineQueue();
+    } finally {
+      setIsSyncingOffline(false);
+    }
+  };
 
   const activeAnnouncements = systemAnnouncements.filter(
     (a) => a.active && isAnnouncementTargetedToUser(a, effectiveUser)
@@ -142,20 +169,118 @@ export const Header: React.FC = () => {
             <h1 className="text-sm font-extrabold text-slate-800 dark:text-slate-100 sm:text-base truncate">
               {getTabTitle()}
             </h1>
-            <span className="hidden items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] sm:text-xs font-semibold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 md:inline-flex shrink-0">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Live Store
-            </span>
+
+            {/* Offline sync indicator */}
+            {isOfflineMode ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] sm:text-xs font-bold text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 shrink-0">
+                <WifiOff className="h-3 w-3 text-amber-600 animate-pulse" />
+                <span>Offline {pendingOfflineCount > 0 ? `(${pendingOfflineCount} queued)` : ''}</span>
+              </span>
+            ) : pendingOfflineCount > 0 ? (
+              <button
+                type="button"
+                onClick={handleManualSync}
+                disabled={isSyncingOffline}
+                className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] sm:text-xs font-bold text-blue-700 hover:bg-blue-100 border border-blue-200 dark:bg-blue-950/80 dark:border-blue-800 dark:text-blue-300 shrink-0 transition"
+                title="Click to sync offline changes to Supabase"
+              >
+                <RefreshCw className={`h-3 w-3 ${isSyncingOffline ? 'animate-spin text-blue-600' : ''}`} />
+                <span>{isSyncingOffline ? 'Syncing...' : `Sync (${pendingOfflineCount})`}</span>
+              </button>
+            ) : (
+              <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] sm:text-xs font-semibold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 md:inline-flex shrink-0 transition-all duration-300">
+                <span className={`h-1.5 w-1.5 rounded-full ${isBackgroundFetching ? 'bg-indigo-500 animate-ping' : 'bg-emerald-500 animate-pulse'}`}></span>
+                <span>{isBackgroundFetching ? 'Syncing...' : 'Live Store'}</span>
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
-            <span className="truncate max-w-[120px] sm:max-w-none font-medium text-slate-700 dark:text-slate-300">
-              {currentShopName}
-            </span>
-            <span>•</span>
-            <span className="font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1 py-0.2 rounded text-[10px]">
-              {currentShopCode}
-            </span>
+          {/* Active Store Switcher / Badge */}
+          <div className="relative flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+            {isSuperAdmin && registeredUsers && registeredUsers.length > 0 ? (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsStoreSwitcherOpen((prev) => !prev)}
+                  className="flex items-center gap-1 font-semibold text-blue-700 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 transition group"
+                  title="Switch target store context"
+                >
+                  <Store className="h-3 w-3 text-blue-600 dark:text-blue-400" />
+                  <span className="truncate max-w-[130px] sm:max-w-[180px] underline underline-offset-2 decoration-blue-300">
+                    {currentShopName}
+                  </span>
+                  <span className="font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1 py-0.2 rounded text-[10px]">
+                    {currentShopCode}
+                  </span>
+                  <ChevronDown className="h-3 w-3 opacity-60 group-hover:opacity-100 transition" />
+                </button>
+
+                {isStoreSwitcherOpen && (
+                  <div className="absolute left-0 top-full mt-1.5 w-64 rounded-xl bg-white dark:bg-slate-900 shadow-xl border border-slate-200 dark:border-slate-800 py-1.5 z-50 text-xs">
+                    <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                      <span>Switch Active Store</span>
+                      <Building2 className="h-3.5 w-3.5" />
+                    </div>
+
+                    <div className="max-h-60 overflow-y-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          stopImpersonatingStore();
+                          setIsStoreSwitcherOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 transition ${
+                          !impersonatedUser ? 'bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-bold">Dukaan Corporate HQ</div>
+                          <div className="text-[10px] text-slate-400 font-mono">DUKAAN-HQ • Super Admin</div>
+                        </div>
+                        {!impersonatedUser && <span className="h-2 w-2 rounded-full bg-blue-600"></span>}
+                      </button>
+
+                      {registeredUsers
+                        .filter((u) => u.role === 'STORE_OWNER' && u.id !== currentUser?.id)
+                        .map((u) => {
+                          const isSelected = impersonatedUser?.id === u.id;
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => {
+                                startImpersonatingStore(u);
+                                setIsStoreSwitcherOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 transition ${
+                                isSelected ? 'bg-blue-50/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold' : 'text-slate-700 dark:text-slate-300'
+                              }`}
+                            >
+                              <div className="truncate pr-2">
+                                <div className="font-semibold truncate">{u.shopName || u.name}</div>
+                                <div className="text-[10px] text-slate-400 font-mono truncate">
+                                  {u.shopCode || 'STORE'} • {u.name}
+                                </div>
+                              </div>
+                              {isSelected && <span className="h-2 w-2 rounded-full bg-blue-600 shrink-0"></span>}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <span className="truncate max-w-[120px] sm:max-w-none font-medium text-slate-700 dark:text-slate-300">
+                  {currentShopName}
+                </span>
+                <span>•</span>
+                <span className="font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1 py-0.2 rounded text-[10px]">
+                  {currentShopCode}
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

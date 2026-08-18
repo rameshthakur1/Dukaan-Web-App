@@ -847,6 +847,70 @@ BEFORE INSERT ON public.stock_purchases
 FOR EACH ROW EXECUTE FUNCTION public.fn_process_purchase_automation();
 
 
+-- -------------------------------------------------------------------------
+-- MULTI-STORE TENANT IDENTITY ENFORCEMENT
+-- Prioritizes explicit payload shop_code and shop_name over Admin's personal JWT metadata
+-- -------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.fn_enforce_target_store_identity()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- 1. Explicit payload shop_code has highest priority, then JWT metadata, then default
+  NEW.shop_code := COALESCE(
+    NULLIF(TRIM(NEW.shop_code), ''),
+    (auth.jwt()->'raw_user_meta_data'->>'shop_code'),
+    (auth.jwt()->'user_metadata'->>'shop_code'),
+    'SHOP-01'
+  );
+  
+  -- 2. Explicit payload shop_name has highest priority
+  NEW.shop_name := COALESCE(
+    NULLIF(TRIM(NEW.shop_name), ''),
+    (auth.jwt()->'raw_user_meta_data'->>'shop_name'),
+    (auth.jwt()->'user_metadata'->>'shop_name'),
+    'Retail Store'
+  );
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Attach identity triggers
+DROP TRIGGER IF EXISTS trg_invoices_identity ON public.invoices;
+CREATE TRIGGER trg_invoices_identity
+BEFORE INSERT OR UPDATE ON public.invoices
+FOR EACH ROW EXECUTE FUNCTION public.fn_enforce_target_store_identity();
+
+DROP TRIGGER IF EXISTS trg_sales_identity ON public.sales;
+CREATE TRIGGER trg_sales_identity
+BEFORE INSERT OR UPDATE ON public.sales
+FOR EACH ROW EXECUTE FUNCTION public.fn_enforce_target_store_identity();
+
+DROP TRIGGER IF EXISTS trg_purchases_identity ON public.purchases;
+CREATE TRIGGER trg_purchases_identity
+BEFORE INSERT OR UPDATE ON public.purchases
+FOR EACH ROW EXECUTE FUNCTION public.fn_enforce_target_store_identity();
+
+DROP TRIGGER IF EXISTS trg_products_identity ON public.products;
+CREATE TRIGGER trg_products_identity
+BEFORE INSERT OR UPDATE ON public.products
+FOR EACH ROW EXECUTE FUNCTION public.fn_enforce_target_store_identity();
+
+DROP TRIGGER IF EXISTS trg_customers_identity ON public.customers;
+CREATE TRIGGER trg_customers_identity
+BEFORE INSERT OR UPDATE ON public.customers
+FOR EACH ROW EXECUTE FUNCTION public.fn_enforce_target_store_identity();
+
+DROP TRIGGER IF EXISTS trg_suppliers_identity ON public.suppliers;
+CREATE TRIGGER trg_suppliers_identity
+BEFORE INSERT OR UPDATE ON public.suppliers
+FOR EACH ROW EXECUTE FUNCTION public.fn_enforce_target_store_identity();
+
+DROP TRIGGER IF EXISTS trg_expenses_identity ON public.expenses;
+CREATE TRIGGER trg_expenses_identity
+BEFORE INSERT OR UPDATE ON public.expenses
+FOR EACH ROW EXECUTE FUNCTION public.fn_enforce_target_store_identity();
+
 -- DISABLE ROW LEVEL SECURITY (RLS) FOR UNRESTRICTED REALTIME RECORDING
 ALTER TABLE public.customers DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.suppliers DISABLE ROW LEVEL SECURITY;
@@ -887,6 +951,7 @@ export const CloudBackupModal: React.FC = () => {
     importDataFromJson,
     resetToDefaultDemoData,
     shopProfile,
+    activeShopCode,
   } = useApp();
 
   const [importNotice, setImportNotice] = useState<string | null>(null);
@@ -899,7 +964,7 @@ export const CloudBackupModal: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `Dukaan_Backup_${shopProfile.shopCode}_${new Date().toISOString().slice(0, 10)}.json`;
+    link.download = `Dukaan_Backup_${activeShopCode || shopProfile.shopCode}_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

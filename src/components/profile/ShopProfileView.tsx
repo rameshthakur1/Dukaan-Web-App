@@ -41,30 +41,25 @@ export const ShopProfileView: React.FC = () => {
     changeCurrentPassword,
     deleteSelfAccount,
     confirmAction,
+    activeShopCode,
+    activeShopName,
+    activeOwnerName,
   } = useApp();
 
   // Active section tab
   const [activeTab, setActiveTab] = useState<ProfileSectionTab>('GENERAL');
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
-  const effectiveShopCode = isSuperAdmin
-    ? (currentUser?.shopCode || shopProfile.shopCode || 'DUKAAN-8821')
-    : (currentUser?.shopCode || (shopProfile.shopCode && shopProfile.shopCode !== 'DUKAAN-8821' && shopProfile.shopCode !== 'SHOP-0001' ? shopProfile.shopCode : 'SHOP-01'));
-  const effectiveShopName = currentUser?.shopName || (shopProfile.shopName && shopProfile.shopName !== 'Dukaan.io Corporate HQ' && shopProfile.shopName !== 'My Store' ? shopProfile.shopName : (isSuperAdmin ? 'Dukaan.io Corporate HQ' : 'My Store'));
+  const effectiveShopCode = activeShopCode;
+  const effectiveShopName = activeShopName;
 
   // General Details State (strictly populated with user's own details)
   const [shopName, setShopName] = useState(() => {
-    if (!isSuperAdmin) {
-      return currentUser?.shopName || (shopProfile.shopName && shopProfile.shopName !== 'Dukaan.io Corporate HQ' && shopProfile.shopName !== 'My Store' ? shopProfile.shopName : '');
-    }
-    return currentUser?.shopName || shopProfile.shopName || 'Dukaan.io Corporate HQ';
+    return activeShopName || shopProfile.shopName || '';
   });
 
   const [ownerName, setOwnerName] = useState(() => {
-    if (!isSuperAdmin) {
-      return currentUser?.name || (shopProfile.ownerName && !shopProfile.ownerName.includes('Super Admin') && shopProfile.ownerName !== 'Store Owner' ? shopProfile.ownerName : '');
-    }
-    return currentUser?.name || shopProfile.ownerName || 'Super Admin';
+    return activeOwnerName || shopProfile.ownerName || '';
   });
 
   const [phone, setPhone] = useState(() => {
@@ -93,37 +88,14 @@ export const ShopProfileView: React.FC = () => {
 
   // Keep state in sync with shopProfile & currentUser
   useEffect(() => {
-    if (currentUser) {
-      if (!isSuperAdmin) {
-        if (currentUser.shopName) setShopName(currentUser.shopName);
-        if (currentUser.name) setOwnerName(currentUser.name);
-        if (currentUser.phone) setPhone(currentUser.phone);
-        if (currentUser.email) setEmail(currentUser.email);
-      }
-    }
-  }, [currentUser, isSuperAdmin]);
+    if (activeShopName) setShopName(activeShopName);
+    if (activeOwnerName) setOwnerName(activeOwnerName);
+  }, [activeShopName, activeOwnerName]);
 
   useEffect(() => {
     if (shopProfile) {
-      if (isSuperAdmin) {
-        if (shopProfile.shopName) setShopName(shopProfile.shopName);
-        if (shopProfile.ownerName) setOwnerName(shopProfile.ownerName);
-        if (shopProfile.phone) setPhone(shopProfile.phone);
-        if (shopProfile.email) setEmail(shopProfile.email);
-      } else {
-        if (shopProfile.shopName && shopProfile.shopName !== 'Dukaan.io Corporate HQ' && shopProfile.shopName !== 'My Store') {
-          setShopName(shopProfile.shopName);
-        }
-        if (shopProfile.ownerName && !shopProfile.ownerName.includes('Super Admin') && shopProfile.ownerName !== 'Store Owner') {
-          setOwnerName(shopProfile.ownerName);
-        }
-        if (shopProfile.phone && shopProfile.phone !== '9800805092' && shopProfile.phone !== '9801234567') {
-          setPhone(shopProfile.phone);
-        }
-        if (shopProfile.email && shopProfile.email !== 'admin@dukan') {
-          setEmail(shopProfile.email);
-        }
-      }
+      if (shopProfile.phone) setPhone(shopProfile.phone);
+      if (shopProfile.email) setEmail(shopProfile.email);
       if (shopProfile.tagline !== undefined) setTagline(shopProfile.tagline);
       if (shopProfile.logoUrl !== undefined) setLogoUrl(shopProfile.logoUrl);
       if (shopProfile.address) {

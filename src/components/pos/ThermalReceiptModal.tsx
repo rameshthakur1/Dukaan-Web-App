@@ -9,7 +9,7 @@ interface ThermalReceiptModalProps {
 }
 
 export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({ invoice, onClose }) => {
-  const { shopProfile } = useApp();
+  const { shopProfile, activeShopCode, activeShopName } = useApp();
   const [receiptWidth, setReceiptWidth] = useState<'58mm' | '80mm' | 'A4'>(
     shopProfile.thermalPrinterType === '58mm' ? '58mm' : '80mm'
   );
@@ -19,7 +19,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({ invoic
   };
 
   const handleWhatsAppShare = () => {
-    const text = `*${shopProfile.shopName}*\n*Tax Invoice: ${invoice.invoiceNo}*\nDate: ${new Date(invoice.createdAt).toLocaleDateString()}\nCustomer: ${invoice.customerName} (${invoice.customerPhone})\n\n` +
+    const text = `*${activeShopName || shopProfile.shopName}*\n*Tax Invoice: ${invoice.invoiceNo}*\nDate: ${new Date(invoice.createdAt).toLocaleDateString()}\nCustomer: ${invoice.customerName} (${invoice.customerPhone})\n\n` +
       invoice.items.map((i) => `• ${i.productName} (${i.quantity} ${i.unitName}) @ NPR ${i.unitPrice} = NPR ${i.totalPrice}`).join('\n') +
       `\n\nSubtotal: NPR ${invoice.subtotal}\nDiscount: NPR ${invoice.discount}\n*Net Total: NPR ${invoice.netAmount}*\n` +
       `Paid via Cash: NPR ${invoice.splitPayment.cash}, QR: NPR ${invoice.splitPayment.qr}, Udharo: NPR ${invoice.splitPayment.udharo}\n\nThank you for shopping with us!`;
@@ -132,7 +132,7 @@ export const ThermalReceiptModal: React.FC<ThermalReceiptModalProps> = ({ invoic
                 </p>
               )}
               <p className="text-[10px] text-slate-400 font-sans pt-0.5">
-                Shop Code: {shopProfile.shopCode}
+                Shop Code: {activeShopCode || shopProfile.shopCode}
               </p>
             </div>
 

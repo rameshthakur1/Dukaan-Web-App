@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 
 export const ProductCatalog: React.FC = () => {
-  const { products, shopProfile, addProduct, updateProduct, deleteProduct, confirmAction } = useApp();
+  const { products, shopProfile, addProduct, updateProduct, deleteProduct, confirmAction, isRowRecentlyUpdated, isBackgroundFetching } = useApp();
   const currencySymbol = shopProfile?.currencySymbol || 'NPR';
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -277,10 +277,15 @@ export const ProductCatalog: React.FC = () => {
           ) : (
             filtered.map((p) => {
               const isLow = p.stockQty <= p.minStockAlert;
+              const isHighlighted = isRowRecentlyUpdated(p.id);
               return (
                 <div
                   key={`mob-${p.id}`}
-                  className="p-3.5 rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 shadow-xs flex flex-col gap-2.5"
+                  className={`p-3.5 rounded-2xl border transition-all duration-300 shadow-xs flex flex-col gap-2.5 ${
+                    isHighlighted
+                      ? 'border-emerald-400 bg-emerald-50/70 dark:bg-emerald-950/40 dark:border-emerald-600 ring-2 ring-emerald-400/30'
+                      : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900'
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -400,8 +405,16 @@ export const ProductCatalog: React.FC = () => {
               ) : (
                 filtered.map((p) => {
                   const isLow = p.stockQty <= p.minStockAlert;
+                  const isHighlighted = isRowRecentlyUpdated(p.id);
                   return (
-                    <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800/80 last:border-b-0">
+                    <tr
+                      key={p.id}
+                      className={`border-b border-slate-200 dark:border-slate-800/80 last:border-b-0 transition-all duration-300 ${
+                        isHighlighted
+                          ? 'bg-emerald-50/80 dark:bg-emerald-950/40 ring-1 ring-inset ring-emerald-400/40'
+                          : 'hover:bg-slate-50/80 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
                       <td className="p-3 border-r border-slate-200 dark:border-slate-800/80">
                         <div className="font-bold text-slate-900 dark:text-slate-100">{p.name}</div>
                         <div className="flex items-center gap-1.5 mt-0.5">

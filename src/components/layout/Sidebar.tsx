@@ -54,6 +54,10 @@ export const Sidebar: React.FC = () => {
     adminViewMode,
     setAdminViewMode,
     staffList,
+    impersonatedUser,
+    activeShopCode,
+    activeShopName,
+    activeOwnerName,
   } = useApp();
 
   const lowStockCount = products.filter((p) => p.stockQty <= p.minStockAlert).length;
@@ -63,9 +67,9 @@ export const Sidebar: React.FC = () => {
   const pendingStaffRequestsCount = staffList.filter((s) => s.accountRequestStatus === 'PENDING').length + registeredUsers.filter((u) => u.staffUserIdAccessStatus === 'PENDING').length;
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
-  const currentShopName = currentUser?.shopName || (shopProfile.shopName && shopProfile.shopName !== 'My Store' && shopProfile.shopName !== 'Dukaan.io Corporate HQ' ? shopProfile.shopName : (isSuperAdmin ? 'Dukaan.io Corporate HQ' : 'My Store'));
-  const currentShopCode = currentUser?.shopCode || (shopProfile.shopCode && shopProfile.shopCode !== 'SHOP-0001' && shopProfile.shopCode !== 'DUKAAN-8821' ? shopProfile.shopCode : (isSuperAdmin ? 'DUKAAN-8821' : 'SHOP-01'));
-  const currentOwnerName = currentUser?.name || shopProfile.ownerName || 'Store Owner';
+  const currentShopName = activeShopName;
+  const currentShopCode = activeShopCode;
+  const currentOwnerName = activeOwnerName;
 
   const storeNavItems: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },

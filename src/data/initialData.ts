@@ -46,12 +46,12 @@ export const NEPAL_PROVINCES = [
 ];
 
 export const INITIAL_SHOP_PROFILE: ShopProfile = {
-  shopName: '',
-  ownerName: '',
-  phone: '',
-  email: '',
+  shopName: 'Dukaan Corporate HQ',
+  ownerName: 'Super Admin',
+  phone: '9801234567',
+  email: 'admin@dukan',
   panVatNo: '',
-  shopCode: 'SHOP-01',
+  shopCode: 'DUKAAN-HQ',
   currencySymbol: 'NPR',
   thermalPrinterType: '80mm',
   enableVat: false,
@@ -59,12 +59,12 @@ export const INITIAL_SHOP_PROFILE: ShopProfile = {
   tagline: '',
   logoUrl: '',
   address: {
-    province: '',
-    district: '',
-    municipality: '',
-    wardNo: '',
-    tole: '',
-    fullAddress: '',
+    province: 'Bagmati Province',
+    district: 'Kathmandu',
+    municipality: 'Kathmandu Metro',
+    wardNo: '1',
+    tole: 'Durbar Marg',
+    fullAddress: 'Durbar Marg, Kathmandu',
   },
 };
 
