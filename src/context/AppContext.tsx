@@ -2606,25 +2606,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  // Pure Supabase Sanitizer for 'khata_transactions' / 'udharo_khata' tables
+  // Pure Supabase Sanitizer matching public.udharo_khata schema exactly
   const toSupabaseKhataRow = (k: any, sCode: string, sName: string, uId: string) => {
     const nowIso = new Date().toISOString();
+    const entityId = k.entityId || k.entity_id ? String(k.entityId || k.entity_id) : null;
+    const entityName = String(k.entityName || k.entity_name || '');
+    const amountVal = Number(k.amount || 0);
+    const invoiceRef = k.referenceInvoiceId || k.reference_invoice_id ? String(k.referenceInvoiceId || k.reference_invoice_id) : null;
+    const noteStr = String(k.note || k.notes || '');
+    const isCustomer = (k.entityType || k.entity_type || 'CUSTOMER') === 'CUSTOMER';
+    const createdAtVal = String(k.createdAt || k.created_at || nowIso);
+
     return {
       id: String(k.id),
-      entity_type: String(k.entityType || k.entity_type || 'CUSTOMER'),
-      entity_id: k.entityId || k.entity_id ? String(k.entityId || k.entity_id) : null,
-      entity_name: String(k.entityName || k.entity_name || ''),
-      type: String(k.type || 'CREDIT_GIVEN'),
-      amount: Number(k.amount || 0),
-      payment_method: String(k.paymentMethod || k.payment_method || 'CASH'),
-      reference_invoice_id: k.referenceInvoiceId || k.reference_invoice_id ? String(k.referenceInvoiceId || k.reference_invoice_id) : null,
-      note: String(k.note || k.notes || ''),
-      created_at: String(k.createdAt || k.created_at || nowIso),
+      entity_type: String(k.entityType || k.entity_type || (isCustomer ? 'CUSTOMER' : 'SUPPLIER')),
+      entity_id: entityId,
+      entity_name: entityName,
+      type: String(k.type || (isCustomer ? 'CREDIT_GIVEN' : 'DEBT_ADDED')),
+      amount: amountVal,
+      payment_method: String(k.paymentMethod || k.payment_method || 'UDHARO'),
+      reference_invoice_id: invoiceRef,
+      note: noteStr,
       balance_after: Number(k.balanceAfter ?? k.balance_after ?? 0),
       performed_by: String(k.performedBy || k.performed_by || ''),
       shop_name: String(k.shopName || k.shop_name || sName || ''),
       shop_code: String(k.shopCode || k.shop_code || sCode || ''),
       user_id: String(k.userId || k.user_id || uId || ''),
+      created_at: createdAtVal,
+      updated_at: nowIso,
       synced_at: nowIso,
     };
   };
@@ -3029,10 +3038,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       syncTasks.push(safeSyncTable('suppliers', suppliersData));
     }
 
-    // 5. Khata Transactions
+    // 5. Khata Transactions & Udharo Khata
     if (currKhata.length > 0) {
       const khataData = currKhata.map((k) => toSupabaseKhataRow(k, sCode, sName, uId));
-      syncTasks.push(safeSyncTable('khata_transactions', khataData, 'udharo_khata'));
+      syncTasks.push(safeSyncTable('udharo_khata', khataData));
+      syncTasks.push(safeSyncTable('khata_transactions', khataData));
     }
 
     // 6. Products
@@ -4919,8 +4929,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           type: 'CREDIT_GIVEN',
           amount: udharoAmount,
           paymentMethod: 'UDHARO',
-          referenceInvoiceId: newInvoice.id,
-          note: `Udharo on Invoice ${invoiceNo}: ${itemsSummary.slice(0, 120)}`,
+          referenceInvoiceId: invoiceNo,
+          note: `Udharo on Invoice ${invoiceNo}: ${itemsSummary.slice(0, 150)}`,
           createdAt: new Date().toISOString(),
           balanceAfter: (customerObj?.currentBalance || 0) + udharoAmount,
           performedBy: payload.cashierName || getPerformerTag(),
@@ -4930,11 +4940,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setKhataTransactions((prev) => [newKhata, ...prev]);
         khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
 
-        // Instant push to Supabase Udharo / Khata tables
+        // Direct instant push to Supabase public.udharo_khata table
         if (typeof navigator !== 'undefined' && navigator.onLine) {
           const { userId: currentUserId } = getActiveShopIdentity();
           const khataRow = toSupabaseKhataRow(newKhata, shopCode, shopName, currentUserId);
-          safeSyncTable('khata_transactions', [khataRow], 'udharo_khata');
+          
+          Promise.resolve(supabase.from('udharo_khata').upsert(khataRow, { onConflict: 'id' }))
+            .then(({ error }: any) => {
+              if (error) {
+                console.warn('[Supabase udharo_khata direct push warning]:', error.message);
+                Promise.resolve(supabase.from('khata_transactions').upsert(khataRow, { onConflict: 'id' })).catch(() => {});
+              }
+            })
+            .catch((err: any) => console.warn('[Supabase udharo_khata direct exception]:', err));
+
+          safeSyncTable('udharo_khata', [khataRow]);
+          safeSyncTable('khata_transactions', [khataRow]);
         }
       }
 
@@ -4961,7 +4982,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (typeof navigator !== 'undefined' && navigator.onLine) {
           const { userId: currentUserId } = getActiveShopIdentity();
           const khataRow = toSupabaseKhataRow(newKhata, shopCode, shopName, currentUserId);
-          safeSyncTable('khata_transactions', [khataRow], 'udharo_khata');
+          safeSyncTable('udharo_khata', [khataRow]);
+          safeSyncTable('khata_transactions', [khataRow]);
         }
       }
     }
@@ -5359,7 +5381,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setKhataTransactions((prev) => [newKhata, ...prev]);
     khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
-    safeSyncTable('khata_transactions', [newKhata], 'udharo_khata');
+    safeSyncTable('udharo_khata', [newKhata]);
+    safeSyncTable('khata_transactions', [newKhata]);
 
     logActivity({
       actionType: 'ADVANCE_PAYMENT',
@@ -5411,7 +5434,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setKhataTransactions((prev) => [newKhata, ...prev]);
     khataTransactionsRef.current = [newKhata, ...khataTransactionsRef.current];
-    safeSyncTable('khata_transactions', [newKhata], 'udharo_khata');
+    safeSyncTable('udharo_khata', [newKhata]);
+    safeSyncTable('khata_transactions', [newKhata]);
 
     const newAdv: SupplierAdvancePayment = {
       id: `SUPP-ADV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
