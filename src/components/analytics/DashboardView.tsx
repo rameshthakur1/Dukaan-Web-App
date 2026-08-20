@@ -52,7 +52,41 @@ import { ShopExpensesModal } from './ShopExpensesModal';
 import { ReportPdfModal } from './ReportPdfModal';
 
 export const DashboardView: React.FC = () => {
-  const { invoices, products, customers, suppliers, expenses, purchases, setActiveTab, triggerCloudBackup, shopProfile, currentUser, activeShopCode, activeShopName } = useApp();
+  const { invoices, products, customers, suppliers, expenses, purchases, setActiveTab, triggerCloudBackup, shopProfile, currentUser, activeShopCode, activeShopName, impersonatedUser, registeredUsers } = useApp();
+
+  // Resolve actual store user / store owner username (not the admin's username)
+  const displayStoreUsername = useMemo(() => {
+    // 1. If currently impersonating a store owner
+    if (impersonatedUser) {
+      return impersonatedUser.username || impersonatedUser.name || 'user';
+    }
+
+    // 2. If logged in as a normal store user/manager (non-admin)
+    if (currentUser && currentUser.role !== 'SUPER_ADMIN' && currentUser.role !== 'ADMIN') {
+      return currentUser.username || currentUser.name || 'user';
+    }
+
+    // 3. If admin is viewing a shop, find matching store owner by shopCode / shopName from registered users
+    if (registeredUsers && registeredUsers.length > 0) {
+      const matchedUser = registeredUsers.find(
+        (u) =>
+          u.role !== 'SUPER_ADMIN' &&
+          ((u.shopCode && u.shopCode.toUpperCase() === (activeShopCode || '').toUpperCase()) ||
+            (u.shopName && u.shopName.toLowerCase() === (activeShopName || '').toLowerCase()))
+      );
+      if (matchedUser?.username) return matchedUser.username;
+      if (matchedUser?.name) return matchedUser.name;
+    }
+
+    // 4. Fallback to shop profile owner name or store code handle
+    if (shopProfile?.ownerName) {
+      return shopProfile.ownerName.toLowerCase().replace(/\s+/g, '_');
+    }
+    if (activeShopCode) {
+      return activeShopCode.toLowerCase();
+    }
+    return 'store_user';
+  }, [impersonatedUser, currentUser, registeredUsers, activeShopCode, activeShopName, shopProfile]);
 
   // Shop Expenses modal state
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
@@ -989,7 +1023,7 @@ export const DashboardView: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-1">
-                Store user: <strong className="text-amber-300">@{currentUser?.username || 'user'}</strong> • Live performance rating & financial breakdown for {filterLabelMap[dateFilter]}
+                Store user: <strong className="text-amber-300">@{displayStoreUsername}</strong> • Live performance rating & financial breakdown for {filterLabelMap[dateFilter]}
               </p>
             </div>
           </div>
