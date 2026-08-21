@@ -44,7 +44,18 @@ import {
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
-  const { login, registerUser, planPrices, planFeatures, validateCoupon, registeredUsers, updateUserPassword, aboutUsText, ourMissionText } = useApp();
+  const {
+    login,
+    registerUser,
+    planPrices,
+    planFeatures,
+    validateCoupon,
+    registeredUsers,
+    updateUserPassword,
+    aboutUsText,
+    ourMissionText,
+    fetchRegisteredUsersFromSupabase,
+  } = useApp();
 
   const formatPrice = (val: number | undefined | null) => {
     if (val === undefined || val === null || isNaN(val)) return '0';
@@ -242,106 +253,10 @@ export const LoginPage: React.FC = () => {
       console.warn('Supabase sign-in check handled gracefully:', err);
     }
 
-    // 3. Fallback: Exhaustive search in Supabase across all tables & store snapshots for remote user accounts
+    // 3. Fallback: Fetch real registered users from Supabase and retry login
     try {
-      const userCandidates: AuthUser[] = [];
-
-      // Query registered_users
-      try {
-        const { data: regData } = await supabase.from('registered_users').select('*');
-        if (regData && regData.length > 0) {
-          regData.forEach((row: any) => {
-            if (row.user_payload) userCandidates.push(row.user_payload);
-            else if (row.username || row.email) {
-              userCandidates.push({
-                id: row.id || `USR-${Date.now()}`,
-                username: row.username || row.email?.split('@')[0] || 'user',
-                password: row.password || cleanInputPass,
-                name: row.name || row.shop_name || 'Store Owner',
-                role: row.role || 'STORE_OWNER',
-                email: row.email || `${row.username}@store.com`,
-                phone: row.phone || '',
-                shopName: row.shop_name || 'My Store',
-                shopCode: row.shop_code || 'SHOP-1001',
-                status: row.status || 'TRIAL_ACTIVE',
-                subscriptionPlan: row.subscription_plan || '7_DAY_TRIAL',
-                trialStartDate: row.trial_start_date || new Date().toISOString().split('T')[0],
-                trialExpiryDate: row.trial_expiry_date || '2099-12-31',
-                registeredAt: row.registered_at || new Date().toISOString().split('T')[0],
-              });
-            }
-          });
-        }
-      } catch (e) {
-        /* ignore table missing */
-      }
-
-      // Query app_users
-      try {
-        const { data: appData } = await supabase.from('app_users').select('*');
-        if (appData && appData.length > 0) {
-          appData.forEach((row: any) => {
-            if (row.user_payload) userCandidates.push(row.user_payload);
-            else if (row.username || row.email) {
-              userCandidates.push({
-                id: row.id || `USR-${Date.now()}`,
-                username: row.username || row.email?.split('@')[0] || 'user',
-                password: row.password || cleanInputPass,
-                name: row.name || row.shop_name || 'Store Owner',
-                role: row.role || 'STORE_OWNER',
-                email: row.email || `${row.username}@store.com`,
-                phone: row.phone || '',
-                shopName: row.shop_name || 'My Store',
-                shopCode: row.shop_code || 'SHOP-1001',
-                status: row.status || 'TRIAL_ACTIVE',
-                subscriptionPlan: row.subscription_plan || '7_DAY_TRIAL',
-                trialStartDate: row.trial_start_date || new Date().toISOString().split('T')[0],
-                trialExpiryDate: row.trial_expiry_date || '2099-12-31',
-                registeredAt: row.registered_at || new Date().toISOString().split('T')[0],
-              });
-            }
-          });
-        }
-      } catch (e) {
-        /* ignore table missing */
-      }
-
-      // Query store_snapshots / dukaan_store_snapshots / store_backups
-      try {
-        const { data: snapData } = await supabase.from('store_snapshots').select('*');
-        if (snapData && snapData.length > 0) {
-          snapData.forEach((row: any) => {
-            if (row.registered_users && Array.isArray(row.registered_users)) {
-              row.registered_users.forEach((u: AuthUser) => userCandidates.push(u));
-            }
-          });
-        }
-      } catch (e) {
-        /* ignore table missing */
-      }
-
-      // Merge all valid candidates into local registeredUsers list
-      const validCandidates = userCandidates.filter(
-        (uObj) =>
-          (uObj.status as string) !== 'DELETED' &&
-          uObj.status !== 'REJECTED' &&
-          uObj.status !== 'BLOCKED'
-      );
-
-      if (validCandidates.length > 0) {
-        validCandidates.forEach((uObj) => {
-          registerUser({
-            name: uObj.name || uObj.shopName || uObj.username,
-            username: uObj.username,
-            password: uObj.password || cleanInputPass,
-            email: uObj.email,
-            phone: uObj.phone || '',
-            shopName: uObj.shopName || 'Store',
-            subscriptionPlan: uObj.subscriptionPlan || '7_DAY_TRIAL',
-          });
-        });
-
-        // Retry login after remote hydration
+      const refreshedUsers = await fetchRegisteredUsersFromSupabase();
+      if (refreshedUsers && refreshedUsers.length > 0) {
         res = login(cleanInputUser, cleanInputPass);
         if (res.success) {
           setIsAuthModalOpen(false);
@@ -349,36 +264,7 @@ export const LoginPage: React.FC = () => {
         }
       }
     } catch (err) {
-      console.warn('Supabase deep remote login check:', err);
-    }
-
-    // 4. Universal Fallback: If credentials entered on Live URL but account not yet found locally, auto-register & log in seamlessly so user is NEVER locked out on Live site
-    if (
-      !res.success &&
-      cleanInputUser &&
-      cleanInputPass.length >= 3
-    ) {
-      const isEmail = cleanInputUser.includes('@');
-      const generatedEmail = isEmail ? cleanInputUser : `${cleanInputUser.replace(/[^a-zA-Z0-9]/g, '')}@dukaan.np`;
-      const generatedShopName = `${cleanInputUser.split('@')[0].toUpperCase()} Store`;
-
-      const autoRegRes = registerUser({
-        name: cleanInputUser.split('@')[0],
-        username: isEmail ? cleanInputUser.split('@')[0] : cleanInputUser,
-        password: cleanInputPass,
-        email: generatedEmail,
-        phone: '',
-        shopName: generatedShopName,
-        subscriptionPlan: '7_DAY_TRIAL',
-      });
-
-      if (autoRegRes.success) {
-        const finalLoginRes = login(cleanInputUser, cleanInputPass);
-        if (finalLoginRes.success) {
-          setIsAuthModalOpen(false);
-          return;
-        }
-      }
+      console.warn('Supabase remote login check:', err);
     }
 
     setErrorMsg(res.message || 'Invalid User ID / Email or Password. Please check your credentials.');

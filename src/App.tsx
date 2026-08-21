@@ -22,6 +22,7 @@ import { CloudBackupModal } from './components/more/CloudBackupModal';
 import { ShopExpensesManagement } from './components/analytics/ShopExpensesManagement';
 import { LoginPage } from './components/auth/LoginPage';
 import { AdminPanel } from './components/admin/AdminPanel';
+import { MobileScannerCompanion } from './components/pos/MobileScannerCompanion';
 import { AppLoadingProgress } from './components/common/AppLoadingProgress';
 import { DeletingAccountOverlay } from './components/common/DeletingAccountOverlay';
 import { Clock, AlertTriangle, ShieldCheck, Phone, Mail, LogOut, Zap } from 'lucide-react';
@@ -42,6 +43,25 @@ const AppContent: React.FC = () => {
     isGlobalDeletingAccount,
     globalDeletingDetails,
   } = useApp();
+
+  // If URL indicates standalone mobile scanner pairing mode, launch scanner companion directly
+  const searchParams = new URLSearchParams(window.location.search);
+  const isMobileScannerUrl = searchParams.get('mode') === 'scanner';
+  const pairedShopCode = searchParams.get('pair') || undefined;
+  const pairedShopName = searchParams.get('shopName') || undefined;
+
+  if (isMobileScannerUrl) {
+    return (
+      <MobileScannerCompanion
+        shopCodeParam={pairedShopCode}
+        shopNameParam={pairedShopName}
+        onClose={() => {
+          window.history.replaceState({}, '', window.location.pathname);
+          window.location.reload();
+        }}
+      />
+    );
+  }
 
   // If currently deleting account, show circular deleting overlay immediately
   if (isGlobalDeletingAccount) {
@@ -135,6 +155,8 @@ const AppContent: React.FC = () => {
         return <DashboardView />;
       case 'pos':
         return <POSBillingStation />;
+      case 'scanner':
+        return <MobileScannerCompanion onClose={() => setActiveTab('pos')} />;
       case 'purchases':
         return <PurchaseManagement />;
       case 'expenses':

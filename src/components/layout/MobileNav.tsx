@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   Receipt,
   CreditCard,
+  Smartphone,
 } from 'lucide-react';
 
 export const MobileNav: React.FC = () => {

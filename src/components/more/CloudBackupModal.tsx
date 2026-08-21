@@ -321,25 +321,8 @@ CREATE TABLE IF NOT EXISTS public.users (
   synced_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 8. REGISTERED USERS TABLE (Single Unified User Accounts Table)
 CREATE TABLE IF NOT EXISTS public.registered_users (
-  id TEXT PRIMARY KEY,
-  username TEXT,
-  password TEXT,
-  email TEXT,
-  phone TEXT,
-  name TEXT,
-  role TEXT,
-  shop_name TEXT,
-  shop_code TEXT,
-  status TEXT,
-  subscription_plan TEXT,
-  approved_until_date TEXT,
-  user_payload JSONB,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  synced_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.app_users (
   id TEXT PRIMARY KEY,
   username TEXT,
   password TEXT,

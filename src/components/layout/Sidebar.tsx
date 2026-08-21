@@ -25,6 +25,7 @@ import {
   LogOut,
   Receipt,
   CreditCard,
+  Smartphone,
 } from 'lucide-react';
 
 interface NavItem {

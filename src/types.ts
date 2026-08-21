@@ -527,6 +527,7 @@ export interface StaffPayment {
 export type ActiveTab =
   | 'dashboard'
   | 'pos'
+  | 'scanner'
   | 'products'
   | 'purchases'
   | 'expenses'

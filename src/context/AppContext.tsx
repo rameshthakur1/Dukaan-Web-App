@@ -268,6 +268,7 @@ interface AppContextType {
   rejectStaffUserIdAccess: (userId: string) => void;
   isAccountTrialExpired: (user?: AuthUser | null) => boolean;
   getDaysRemainingInTrial: (user?: AuthUser | null) => number;
+  fetchRegisteredUsersFromSupabase: () => Promise<AuthUser[]>;
 
   // Session Progress Loading & Account Deletion Overlay State
   isSessionLoading: boolean;
@@ -631,32 +632,84 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     'USR-DEMO-02',
   ]);
 
+  // Helper: Strictly deduplicate user accounts to eliminate repetitive stores
+  const deduplicateUserAccounts = (userList: AuthUser[]): AuthUser[] => {
+    const seenIds = new Set<string>();
+    const seenEmails = new Set<string>();
+    const seenUsernames = new Set<string>();
+    const seenShopCodes = new Set<string>();
+    const seenShopOwnerCombos = new Set<string>();
+    const result: AuthUser[] = [];
+
+    // 1. Ensure Super Admin HQ is always first
+    const hqUser = userList.find((u) => u.role === 'SUPER_ADMIN' || u.id === 'USR-SUPERADMIN' || u.shopCode === 'DUKAAN-HQ') || INITIAL_REGISTERED_USERS[0];
+    const cleanHq: AuthUser = {
+      ...hqUser,
+      id: 'USR-SUPERADMIN',
+      username: 'admin@dukan',
+      email: 'admin@dukan',
+      name: 'Super Admin',
+      role: 'SUPER_ADMIN',
+      shopName: 'Dukaan Corporate HQ',
+      shopCode: 'DUKAAN-HQ',
+      status: 'APPROVED',
+      myReferralCode: hqUser.myReferralCode || 'ADM999',
+    };
+    result.push(cleanHq);
+    seenIds.add('USR-SUPERADMIN');
+    seenEmails.add('admin@dukan');
+    seenUsernames.add('admin@dukan');
+    seenShopCodes.add('DUKAAN-HQ');
+
+    // 2. Add only genuine registered user stores
+    for (const u of userList) {
+      if (!u || typeof u !== 'object') continue;
+      if (u.role === 'SUPER_ADMIN' || u.id === 'USR-SUPERADMIN' || u.shopCode === 'DUKAAN-HQ' || u.email === 'admin@dukan' || u.username === 'admin@dukan') continue;
+      if (DUMMY_STORE_IDS.has(u.id) || (u.status as string) === 'DELETED' || u.status === 'REJECTED' || u.status === 'BLOCKED') continue;
+
+      const cleanId = (u.id || '').trim();
+      const cleanEmail = (u.email || '').trim().toLowerCase();
+      const cleanUsername = (u.username || '').trim().toLowerCase();
+      const cleanShopCode = (u.shopCode || '').trim().toUpperCase();
+      const cleanShopName = (u.shopName || '').trim().toLowerCase();
+      const cleanOwner = (u.name || '').trim().toLowerCase();
+      const cleanPhone = (u.phone || '').trim();
+
+      // Skip invalid items without store identity
+      if (!cleanId && !cleanShopName && !cleanEmail && !cleanUsername) continue;
+
+      // Check if duplicate ID, Email, Username, or non-default ShopCode
+      if (cleanId && seenIds.has(cleanId)) continue;
+      if (cleanEmail && seenEmails.has(cleanEmail)) continue;
+      if (cleanUsername && seenUsernames.has(cleanUsername)) continue;
+      if (cleanShopCode && cleanShopCode !== 'STORE' && cleanShopCode !== 'SHOP-01' && seenShopCodes.has(cleanShopCode)) continue;
+      
+      const shopOwnerKey = `${cleanShopName}_${cleanOwner}_${cleanPhone}`;
+      if (cleanShopName && cleanOwner && seenShopOwnerCombos.has(shopOwnerKey)) continue;
+
+      // Mark as seen
+      if (cleanId) seenIds.add(cleanId);
+      if (cleanEmail) seenEmails.add(cleanEmail);
+      if (cleanUsername) seenUsernames.add(cleanUsername);
+      if (cleanShopCode && cleanShopCode !== 'STORE' && cleanShopCode !== 'SHOP-01') seenShopCodes.add(cleanShopCode);
+      if (cleanShopName && cleanOwner) seenShopOwnerCombos.add(shopOwnerKey);
+
+      result.push({
+        ...u,
+        myReferralCode: u.myReferralCode || generateReferralCode(),
+      });
+    }
+    return result;
+  };
+
   const [registeredUsers, setRegisteredUsers] = useState<AuthUser[]>(() => {
     try {
       const saved = localStorage.getItem('dukaan_registered_users_v2');
       if (saved) {
         const parsed: AuthUser[] = JSON.parse(saved);
-        // Clean out dummy demo accounts
-        const realUsers = parsed.filter((u) => !DUMMY_STORE_IDS.has(u.id));
-        const hasSuperAdmin = realUsers.some((u) => u.role === 'SUPER_ADMIN' || u.id === 'USR-SUPERADMIN');
-        const finalUsers = hasSuperAdmin ? realUsers : [...INITIAL_REGISTERED_USERS, ...realUsers];
-        return finalUsers.map((u) => {
-          let userObj = u;
-          if (!userObj.myReferralCode) {
-            userObj = { ...userObj, myReferralCode: generateReferralCode() };
-          }
-          if (userObj.role === 'SUPER_ADMIN' || userObj.id === 'USR-SUPERADMIN') {
-            return {
-              ...userObj,
-              username: 'admin@dukan',
-              email: 'admin@dukan',
-              shopName: 'Dukaan Corporate HQ',
-              shopCode: 'DUKAAN-HQ',
-              password: userObj.password || 'admin123',
-            };
-          }
-          return userObj;
-        });
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return deduplicateUserAccounts(parsed);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -665,13 +718,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   useEffect(() => {
-    // Purge any dummy demo accounts if present
-    const targetDummy = registeredUsers.find((u) => DUMMY_STORE_IDS.has(u.id));
-    if (targetDummy) {
-      deleteUserAccount(targetDummy.id);
-    }
+    // Purge any dummy demo accounts or duplicate store entries if present
     try {
-      localStorage.setItem('dukaan_registered_users_v2', JSON.stringify(registeredUsers));
+      const cleaned = deduplicateUserAccounts(registeredUsers);
+      if (cleaned.length !== registeredUsers.length) {
+        setRegisteredUsers(cleaned);
+      }
+      localStorage.setItem('dukaan_registered_users_v2', JSON.stringify(cleaned));
     } catch (e) {
       console.error(e);
     }
@@ -785,7 +838,198 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const activeStoreUser = impersonatedUser || currentUser;
 
-  // Sequential Shop Code generator starting from SHOP-01 (SHOP-01, SHOP-02, SHOP-03...)
+  const parseSupabaseUserRecord = (row: any): AuthUser | null => {
+    if (!row) return null;
+    const p = row.user_payload || row.userPayload || row.shop_profile || row.shopProfile || {};
+    const rawId = String(row.id || p.id || '');
+
+    // Ignore dummy accounts
+    if (rawId && DUMMY_STORE_IDS.has(rawId)) return null;
+
+    const email = (row.email || p.email || '').trim();
+    const shopName = (row.shop_name || row.shopName || p.shopName || row.name || p.name || 'Store').trim();
+    const shopCode = (row.shop_code || row.shopCode || p.shopCode || (rawId.startsWith('SHOP-') ? rawId : '')).trim();
+
+    if (shopCode === 'GLOBAL_SYSTEM_CONFIG' || shopName.includes('Live Pricing Config')) return null;
+
+    const id = rawId || (shopCode ? `USR-${shopCode}` : (email ? `USR-${email}` : `USR-${Date.now()}`));
+    if (DUMMY_STORE_IDS.has(id)) return null;
+
+    const username = (row.username || p.username || (email ? email.split('@')[0] : '') || shopName.toLowerCase().replace(/[^a-z0-9]/g, '')).trim();
+    const name = (row.name || row.owner_name || row.ownerName || p.name || p.ownerName || p.fullName || 'Store Owner').trim();
+    const role = (row.role || p.role || (id === 'USR-SUPERADMIN' || shopCode === 'DUKAAN-HQ' ? 'SUPER_ADMIN' : 'STORE_OWNER')) as any;
+    const status = (row.status || p.status || 'APPROVED') as any;
+
+    if (status === 'DELETED' || status === 'REJECTED' || status === 'BLOCKED') return null;
+
+    return {
+      id,
+      name: name || shopName || 'Store Owner',
+      email: email || `${username || shopCode.toLowerCase() || 'store'}@dukaan.np`,
+      username: username || shopCode.toLowerCase() || 'user',
+      password: row.password || p.password || 'pass123',
+      role,
+      shopName: shopName || 'Store',
+      shopCode: shopCode || 'SHOP-01',
+      status: (status as any) || 'APPROVED',
+      subscriptionPlan: (row.subscription_plan || row.subscriptionPlan || row.choose_plan || p.subscriptionPlan || 'MONTHLY') as any,
+      registeredAt: row.registered_at || row.registration_date || p.registeredAt || new Date().toISOString().split('T')[0],
+      trialStartDate: row.trial_start_date || row.trialStartDate || p.trialStartDate || row.registered_at || new Date().toISOString().split('T')[0],
+      trialExpiryDate: row.trial_expiry_date || row.expiry_date || p.trialExpiryDate || '',
+      approvedUntilDate: row.approved_until_date || p.approvedUntilDate || '',
+      phone: row.phone || row.contact_no || p.phone || '',
+      province: row.province || p.province || 'Bagmati Province',
+      district: row.district || p.district || 'Kathmandu',
+      address: row.address || p.address || '',
+      myReferralCode: row.my_referral_code || p.myReferralCode || '',
+      referredByCode: row.referred_by_code || row.referredByCode || p.referredByCode || row.used_referral_code || p.usedReferralCode || '',
+    };
+  };
+
+  // Fetch all registered user stores and Dukaan Corporate HQ from Supabase (all sources)
+  const fetchRegisteredUsersFromSupabase = async (): Promise<AuthUser[]> => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return registeredUsers;
+    }
+
+    try {
+      const userCandidates: AuthUser[] = [];
+
+      // 1. Fetch from registered_users table
+      try {
+        const { data: regData } = await supabase.from('registered_users').select('*');
+        if (regData && Array.isArray(regData)) {
+          regData.forEach((row: any) => {
+            const parsed = parseSupabaseUserRecord(row);
+            if (parsed) userCandidates.push(parsed);
+          });
+        }
+      } catch (err) {
+        // quiet catch
+      }
+
+      // 2. Fetch from app_users table
+      try {
+        const { data: appData } = await supabase.from('app_users').select('*');
+        if (appData && Array.isArray(appData)) {
+          appData.forEach((row: any) => {
+            const parsed = parseSupabaseUserRecord(row);
+            if (parsed) userCandidates.push(parsed);
+          });
+        }
+      } catch (err) {
+        // quiet catch
+      }
+
+      // 3. Fetch from users table
+      try {
+        const { data: usrData } = await supabase.from('users').select('*');
+        if (usrData && Array.isArray(usrData)) {
+          usrData.forEach((row: any) => {
+            const parsed = parseSupabaseUserRecord(row);
+            if (parsed) userCandidates.push(parsed);
+          });
+        }
+      } catch (err) {
+        // quiet catch
+      }
+
+      // 4. Fetch from shop_profiles table
+      try {
+        const { data: shopData } = await supabase.from('shop_profiles').select('*');
+        if (shopData && Array.isArray(shopData)) {
+          shopData.forEach((row: any) => {
+            const parsed = parseSupabaseUserRecord(row);
+            if (parsed) userCandidates.push(parsed);
+          });
+        }
+      } catch (err) {
+        // quiet catch
+      }
+
+      // 5. Fetch from store_snapshots & dukaan_store_snapshots tables
+      try {
+        const { data: snapData } = await supabase.from('store_snapshots').select('*');
+        if (snapData && Array.isArray(snapData)) {
+          snapData.forEach((row: any) => {
+            if (row.registered_users && Array.isArray(row.registered_users)) {
+              row.registered_users.forEach((u: any) => {
+                const parsed = parseSupabaseUserRecord(u);
+                if (parsed) userCandidates.push(parsed);
+              });
+            } else {
+              const parsed = parseSupabaseUserRecord(row);
+              if (parsed) userCandidates.push(parsed);
+            }
+          });
+        }
+      } catch (err) {
+        // quiet catch
+      }
+
+      try {
+        const { data: altSnapData } = await supabase.from('dukaan_store_snapshots').select('*');
+        if (altSnapData && Array.isArray(altSnapData)) {
+          altSnapData.forEach((row: any) => {
+            if (row.registered_users && Array.isArray(row.registered_users)) {
+              row.registered_users.forEach((u: any) => {
+                const parsed = parseSupabaseUserRecord(u);
+                if (parsed) userCandidates.push(parsed);
+              });
+            } else {
+              const parsed = parseSupabaseUserRecord(row);
+              if (parsed) userCandidates.push(parsed);
+            }
+          });
+        }
+      } catch (err) {
+        // quiet catch
+      }
+
+      // Combine with existing registered users, deduplicate to keep strictly genuine user stores + Dukaan HQ
+      const combined = [...registeredUsers, ...userCandidates];
+      const deduped = deduplicateUserAccounts(combined);
+
+      setRegisteredUsers(deduped);
+      try {
+        localStorage.setItem('dukaan_registered_users_v2', JSON.stringify(deduped));
+      } catch {}
+
+      return deduped;
+    } catch (e) {
+      console.warn('Error fetching registered users from Supabase:', e);
+      return registeredUsers;
+    }
+  };
+
+  // Auto-fetch remote registered users from Supabase on mount, window focus, visibilitychange, and periodic interval
+  useEffect(() => {
+    fetchRegisteredUsersFromSupabase();
+
+    const handleWindowFocus = () => {
+      fetchRegisteredUsersFromSupabase();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchRegisteredUsersFromSupabase();
+      }
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Periodic sync every 12 seconds so new stores registered on web appear on mobile instantly
+    const interval = setInterval(() => {
+      fetchRegisteredUsersFromSupabase();
+    }, 12000);
+
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(interval);
+    };
+  }, []);
   const generateSequentialShopCode = (existingList: AuthUser[] = []): string => {
     let maxNum = 0;
     existingList.forEach((u) => {
@@ -1021,7 +1265,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
       supabase.from('registered_users').upsert([userPayload], { onConflict: 'id' }).then(({ error }) => {
         if (error) {
-          supabase.from('app_users').upsert([userPayload], { onConflict: 'id' });
+          try {
+            supabase.from('app_users').upsert([userPayload], { onConflict: 'id' }).then(() => {});
+          } catch {}
         }
       });
 
@@ -2654,6 +2900,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 1. Direct or normalized shop code match
     if (rCode && cleanSCode) {
       if (rCode === cleanSCode || normCode(rCode) === normCode(cleanSCode)) return true;
+      if (
+        (cleanSCode === 'DUKAAN-HQ' || cleanSCode === 'DUKAAN-8821') &&
+        (rCode === 'DUKAAN-HQ' || rCode === 'DUKAAN-8821')
+      ) {
+        return true;
+      }
     }
 
     // 2. Direct user_id match
@@ -2665,6 +2917,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // 3. Meaningful shop name match
     if (cleanSName && rName && cleanSName === rName && cleanSName !== 'my store') {
+      return true;
+    }
+    if (
+      (cleanSName.includes('dukaan') && (cleanSName.includes('hq') || cleanSName.includes('corporate'))) &&
+      (rName.includes('dukaan') && (rName.includes('hq') || rName.includes('corporate')))
+    ) {
       return true;
     }
 
@@ -2778,7 +3036,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!activeStoreUser) return;
 
     const { shopCode: sCode, shopName: sName, userId: uId } = getActiveShopIdentity();
-    if (!sCode || sCode === 'N/A' || sCode === 'DUKAAN-HQ' || sCode === 'DUKAAN-8821') {
+    if (!sCode || sCode === 'N/A') {
       return;
     }
     const nowIso = new Date().toISOString();
@@ -3539,6 +3797,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const fetchShopRows = async (tableName: string, altTableName?: string): Promise<any[]> => {
       try {
+        const isHq = sCode === 'DUKAAN-HQ' || sCode === 'DUKAAN-8821' || (sName && sName.toLowerCase().includes('corporate hq'));
+
+        if (isHq) {
+          const { data: hqData } = await supabase
+            .from(tableName)
+            .select('*')
+            .or('shop_code.eq.DUKAAN-HQ,shop_code.eq.DUKAAN-8821,shop_name.ilike.%Corporate HQ%');
+          if (hqData && hqData.length > 0) {
+            return hqData.filter(isStrictShopRecord);
+          }
+        }
+
         const { data, error } = await supabase
           .from(tableName)
           .select('*')
@@ -3984,6 +4254,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const { eventType, table, new: newRecord, old: oldRecord } = payload;
           const recordId = (newRecord as any)?.id || (oldRecord as any)?.id;
           if (!recordId) return;
+
+          // Global store/user table updates - trigger immediate user registry refresh across devices
+          if (
+            table === 'registered_users' ||
+            table === 'app_users' ||
+            table === 'users' ||
+            table === 'shop_profiles' ||
+            table === 'store_snapshots' ||
+            table === 'dukaan_store_snapshots'
+          ) {
+            fetchRegisteredUsersFromSupabase();
+            return;
+          }
 
           const activeShopCode = (activeStoreUser?.shopCode || currentUser?.shopCode || shopProfile?.shopCode || '').trim();
           const activeShopName = (activeStoreUser?.shopName || currentUser?.shopName || shopProfile?.shopName || '').trim();
@@ -6080,6 +6363,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         rejectStaffUserIdAccess,
         isAccountTrialExpired,
         getDaysRemainingInTrial,
+        fetchRegisteredUsersFromSupabase,
 
         isSessionLoading,
         setIsSessionLoading,

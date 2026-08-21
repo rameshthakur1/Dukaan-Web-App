@@ -218,9 +218,24 @@ export const AdminPanel: React.FC = () => {
     updateAboutUsText,
     ourMissionText,
     updateOurMissionText,
+    fetchRegisteredUsersFromSupabase,
   } = useApp();
 
   const [isAdminMenuOpen, setIsAdminMenuOpen] = useState<boolean>(false);
+  const [isRefreshingStores, setIsRefreshingStores] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetchRegisteredUsersFromSupabase();
+  }, []);
+
+  const handleRefreshStoresFromDb = async () => {
+    setIsRefreshingStores(true);
+    try {
+      await fetchRegisteredUsersFromSupabase();
+    } finally {
+      setTimeout(() => setIsRefreshingStores(false), 500);
+    }
+  };
 
   // Admin Change Password Modal State
   const [selectedUserForPasswordChange, setSelectedUserForPasswordChange] = useState<AuthUser | null>(null);
@@ -934,22 +949,35 @@ export const AdminPanel: React.FC = () => {
                 <span className="text-xs text-slate-400 font-mono">({filteredUsers.length} stores matching)</span>
               </h3>
 
-              <button
-                type="button"
-                onClick={() => {
-                  if (currentUser) {
-                    setSelectedUserForPasswordChange(currentUser);
-                    setNewPasswordInput(currentUser.password || '');
-                    setConfirmPasswordInput(currentUser.password || '');
-                    setPassNotice(null);
-                  }
-                }}
-                className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/30 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-sm"
-                id="change-admin-password-btn"
-              >
-                <KeyRound className="h-3.5 w-3.5 text-amber-400" />
-                <span>Change Admin Password</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleRefreshStoresFromDb}
+                  disabled={isRefreshingStores}
+                  className="px-3.5 py-1.5 rounded-xl bg-blue-600/20 text-blue-300 hover:bg-blue-600/30 border border-blue-500/30 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-sm disabled:opacity-50"
+                  id="refresh-stores-from-db-btn"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 text-blue-400 ${isRefreshingStores ? 'animate-spin' : ''}`} />
+                  <span>{isRefreshingStores ? 'Fetching DB Users...' : 'Fetch from Database'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentUser) {
+                      setSelectedUserForPasswordChange(currentUser);
+                      setNewPasswordInput(currentUser.password || '');
+                      setConfirmPasswordInput(currentUser.password || '');
+                      setPassNotice(null);
+                    }
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/30 font-bold text-xs flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-sm"
+                  id="change-admin-password-btn"
+                >
+                  <KeyRound className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Change Admin Password</span>
+                </button>
+              </div>
             </div>
 
             {filteredUsers.length === 0 ? (

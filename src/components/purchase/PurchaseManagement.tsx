@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
 import { StockPurchase } from '../../types';
 import { BarcodeScannerModal } from '../common/BarcodeScannerModal';
+import { findProductAndUnitByBarcode, isBarcodeMatch } from '../../utils/barcodeMatcher';
 import {
   Truck,
   Plus,
@@ -85,15 +86,18 @@ export const PurchaseManagement: React.FC = () => {
   // Find product by term (barcode, SKU, ID, cartonBarcode, or name)
   const findCatalogProduct = (term: string) => {
     if (!term.trim()) return null;
+    const match = findProductAndUnitByBarcode(products, term.trim());
+    if (match) return match.product;
+
     const clean = term.trim().toLowerCase();
     return products.find(
       (p) =>
-        (p.barcode && p.barcode.toLowerCase() === clean) ||
-        (p.sku && p.sku.toLowerCase() === clean) ||
+        (p.name && p.name.toLowerCase().includes(clean)) ||
         (p.id && p.id.toLowerCase() === clean) ||
-        (p.name && p.name.toLowerCase() === clean) ||
-        (p.cartonBarcode && p.cartonBarcode.toLowerCase() === clean) ||
-        (p.unit?.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === clean)
+        isBarcodeMatch(p.barcode, term) ||
+        isBarcodeMatch(p.sku, term) ||
+        isBarcodeMatch(p.cartonBarcode, term) ||
+        isBarcodeMatch(p.unit?.secondaryBarcode, term)
     );
   };
 

@@ -3,6 +3,10 @@ import { useApp } from '../../context/AppContext';
 import { Product, SplitPayment, Invoice, CartItem } from '../../types';
 import { ThermalReceiptModal } from './ThermalReceiptModal';
 import { BarcodeScannerModal } from '../common/BarcodeScannerModal';
+import { PairMobileScannerModal } from './PairMobileScannerModal';
+import { MobileScannerCompanion } from './MobileScannerCompanion';
+import { usePOSRealtimeBroadcast } from '../../hooks/usePOSRealtimeBroadcast';
+import { findProductAndUnitByBarcode } from '../../utils/barcodeMatcher';
 import {
   Search,
   Barcode,
@@ -34,6 +38,16 @@ import {
   X,
   FileText,
   DollarSign,
+  Maximize2,
+  Minimize2,
+  Smartphone,
+  Radio,
+  Wifi,
+  CheckCircle2,
+  Truck,
+  Building2,
+  PowerOff,
+  Unlink,
 } from 'lucide-react';
 
 interface BillTabState {
@@ -74,8 +88,13 @@ export const POSBillingStation: React.FC = () => {
     clearCart,
     completeSaleInvoice,
     customers,
+    suppliers,
+    addSupplier,
+    recordStockPurchase,
     shopProfile,
     addProduct,
+    activeShopCode,
+    activeShopName,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,7 +103,7 @@ export const POSBillingStation: React.FC = () => {
   const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<'PRODUCTS' | 'CART'>('PRODUCTS');
 
-  // Quick Add Unstocked Product Modal state
+  // Quick Add Unstocked Product Modal state (includes Supplier details & auto-ledger)
   const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false);
   const [quickAddBarcode, setQuickAddBarcode] = useState('');
   const [quickAddName, setQuickAddName] = useState('');
@@ -93,6 +112,13 @@ export const POSBillingStation: React.FC = () => {
   const [quickAddCategory, setQuickAddCategory] = useState('General Grocery');
   const [quickAddUnit, setQuickAddUnit] = useState('Packet');
   const [quickAddStockQty, setQuickAddStockQty] = useState<number>(10);
+  const [quickAddSupplierMode, setQuickAddSupplierMode] = useState<'EXISTING' | 'NEW'>('EXISTING');
+  const [quickAddSupplierId, setQuickAddSupplierId] = useState<string>('');
+  const [quickAddSupplierName, setQuickAddSupplierName] = useState<string>('');
+  const [quickAddSupplierPhone, setQuickAddSupplierPhone] = useState<string>('');
+  const [quickAddSupplierPan, setQuickAddSupplierPan] = useState<string>('');
+  const [quickAddSupplierAddress, setQuickAddSupplierAddress] = useState<string>('');
+  const [quickAddPaidStatus, setQuickAddPaidStatus] = useState<'PAID' | 'CREDIT'>('PAID');
 
   // Checkout modal state
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -101,6 +127,21 @@ export const POSBillingStation: React.FC = () => {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [discountInput, setDiscountInput] = useState<number>(0);
+
+  // Full Screen Cart Overview Modal state
+  const [isCartFullscreenOpen, setIsCartFullscreenOpen] = useState(false);
+  const [fullscreenCartSearch, setFullscreenCartSearch] = useState('');
+
+  // Close fullscreen cart on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isCartFullscreenOpen) {
+        setIsCartFullscreenOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isCartFullscreenOpen]);
 
   // Multi-Bill Tabs & Pause/Hold state
   const [billTabs, setBillTabs] = useState<BillTabState[]>(() => {
@@ -420,6 +461,20 @@ export const POSBillingStation: React.FC = () => {
     setQuickAddCategory('General Grocery');
     setQuickAddUnit('Packet');
     setQuickAddStockQty(10);
+    if (suppliers.length > 0) {
+      setQuickAddSupplierMode('EXISTING');
+      setQuickAddSupplierId(suppliers[0].id);
+      setQuickAddSupplierName(suppliers[0].name);
+      setQuickAddSupplierPhone(suppliers[0].phone || '');
+    } else {
+      setQuickAddSupplierMode('NEW');
+      setQuickAddSupplierId('');
+      setQuickAddSupplierName('');
+      setQuickAddSupplierPhone('');
+    }
+    setQuickAddSupplierPan('');
+    setQuickAddSupplierAddress('');
+    setQuickAddPaidStatus('PAID');
     setIsQuickAddModalOpen(true);
   };
 
@@ -434,16 +489,65 @@ export const POSBillingStation: React.FC = () => {
       return;
     }
 
+    // Determine supplier information
+    let finalSupplierId = '';
+    let finalSupplierName = '';
+    let finalSupplierPhone = '';
+
+    if (quickAddSupplierMode === 'EXISTING' && quickAddSupplierId) {
+      const foundSupplier = suppliers.find((s) => s.id === quickAddSupplierId);
+      if (foundSupplier) {
+        finalSupplierId = foundSupplier.id;
+        finalSupplierName = foundSupplier.name;
+        finalSupplierPhone = foundSupplier.phone || '';
+      }
+    }
+
+    // If new supplier mode or typing an unregistered supplier name
+    if (quickAddSupplierMode === 'NEW' && quickAddSupplierName.trim()) {
+      const sName = quickAddSupplierName.trim();
+      const sPhone = quickAddSupplierPhone.trim() || 'N/A';
+
+      // Check if already in supplier list
+      const existing = suppliers.find(
+        (s) => s.name.toLowerCase() === sName.toLowerCase() || (sPhone !== 'N/A' && s.phone === sPhone)
+      );
+
+      if (existing) {
+        finalSupplierId = existing.id;
+        finalSupplierName = existing.name;
+        finalSupplierPhone = existing.phone;
+      } else {
+        // Record down the unregistered supplier into the supplier list
+        const createdSupplier = addSupplier({
+          name: sName,
+          phone: sPhone,
+          companyName: sName,
+          address: quickAddSupplierAddress.trim() || undefined,
+          panVat: quickAddSupplierPan.trim() || undefined,
+          notes: 'Auto-registered during POS Quick Barcode Add',
+        });
+        finalSupplierId = createdSupplier.id;
+        finalSupplierName = createdSupplier.name;
+        finalSupplierPhone = createdSupplier.phone;
+      }
+    }
+
     const price = Number(quickAddSellingPrice);
     const cost = quickAddCostPrice !== '' ? Number(quickAddCostPrice) : Math.round(price * 0.85);
+    const stockQty = Number(quickAddStockQty) || 1;
+    const barcodeVal = quickAddBarcode.trim();
 
+    // 1. Add product to inventory
     const newProd = addProduct({
       name: quickAddName.trim(),
-      sku: `SKU-${quickAddBarcode || Date.now().toString().slice(-6)}`,
-      barcode: quickAddBarcode.trim(),
+      sku: `SKU-${barcodeVal || Date.now().toString().slice(-6)}`,
+      barcode: barcodeVal,
       category: quickAddCategory || 'General Grocery',
-      stockQty: Number(quickAddStockQty) || 1,
+      stockQty: stockQty,
       minStockAlert: 5,
+      supplierId: finalSupplierId || undefined,
+      supplierName: finalSupplierName || undefined,
       unit: {
         primaryUnit: quickAddUnit || 'Packet',
         primarySellingPrice: price,
@@ -451,60 +555,72 @@ export const POSBillingStation: React.FC = () => {
       },
     });
 
+    // 2. Record stock purchase in supplier ledger if supplier details are provided
+    if (finalSupplierName) {
+      const totalCostAmount = stockQty * cost;
+      const cashPaid = quickAddPaidStatus === 'PAID' ? totalCostAmount : 0;
+
+      recordStockPurchase({
+        supplierName: finalSupplierName,
+        supplierPhone: finalSupplierPhone,
+        invoiceRef: `PUR-POS-${Date.now().toString().slice(-6)}`,
+        items: [
+          {
+            productName: newProd.name,
+            sku: newProd.sku,
+            barcode: newProd.barcode,
+            unitName: quickAddUnit || 'Packet',
+            quantity: stockQty,
+            costPrice: cost,
+            sellingPrice: price,
+          },
+        ],
+        cashPaid: cashPaid,
+        notes: `Quick Initial Stock on Barcode Scan [${barcodeVal}] (Supplier: ${finalSupplierName})`,
+      });
+    }
+
+    // 3. Immediately add item to current POS cart for sale
     addToCart(newProd, 1, 'PRIMARY');
     setIsQuickAddModalOpen(false);
   };
 
   // Process single barcode string
-  const processSingleBarcode = (codeToProcess: string) => {
-    const cleanCode = codeToProcess.trim().toLowerCase();
-    if (!cleanCode) return;
-
-    // 1. Check primary single product barcode or SKU (with stock > 0)
-    const primaryMatched = products.find(
-      (p) =>
-        Number(p.stockQty || 0) > 0 &&
-        (p.barcode.toLowerCase() === cleanCode || p.sku.toLowerCase() === cleanCode)
-    );
-
-    if (primaryMatched) {
-      addToCart(primaryMatched, 1, 'PRIMARY');
-      setBarcodeInput('');
-      return;
+  const processSingleBarcode = (codeToProcess: string): {
+    status: 'SUCCESS' | 'OUT_OF_STOCK' | 'NOT_FOUND';
+    product: Product | null;
+    unitPrice: number;
+    unitType: 'PRIMARY' | 'SECONDARY';
+    unitName: string;
+  } => {
+    const cleanCode = (codeToProcess || '').trim();
+    if (!cleanCode) {
+      return { status: 'NOT_FOUND', product: null, unitPrice: 0, unitType: 'PRIMARY', unitName: 'Unit' };
     }
 
-    // 2. Check carton / box barcode (with stock > 0)
-    const cartonMatched = products.find(
-      (p) =>
-        Number(p.stockQty || 0) > 0 &&
-        ((p.cartonBarcode && p.cartonBarcode.toLowerCase() === cleanCode) ||
-          (p.unit.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === cleanCode))
-    );
-
-    if (cartonMatched) {
-      addToCart(cartonMatched, 1, 'SECONDARY');
+    const matched = findProductAndUnitByBarcode(products, cleanCode);
+    if (matched) {
+      addToCart(matched.product, 1, matched.unitType);
       setBarcodeInput('');
-      return;
-    }
-
-    // 3. Check if barcode belongs to an existing product whose stock is 0
-    const outOfStockMatch = products.find(
-      (p) =>
-        p.barcode.toLowerCase() === cleanCode ||
-        p.sku.toLowerCase() === cleanCode ||
-        (p.cartonBarcode && p.cartonBarcode.toLowerCase() === cleanCode) ||
-        (p.unit.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === cleanCode)
-    );
-
-    if (outOfStockMatch) {
-      alert(`Product "${outOfStockMatch.name}" is currently OUT OF STOCK (Stock: 0). Please purchase stock before billing.`);
-      setBarcodeInput('');
-      return;
+      return {
+        status: 'SUCCESS',
+        product: matched.product,
+        unitPrice: matched.unitPrice,
+        unitType: matched.unitType,
+        unitName: matched.unitName,
+      };
     }
 
     // Unstocked barcode scanned / typed! Open Quick Add modal
-    handleUnstockedBarcode(codeToProcess.trim());
+    handleUnstockedBarcode(cleanCode);
     setBarcodeInput('');
+    return {
+      status: 'NOT_FOUND',
+      product: null,
+      unitPrice: 0,
+      unitType: 'PRIMARY',
+      unitName: 'Unit',
+    };
   };
 
   // Handle direct Barcode Scanner submit
@@ -512,6 +628,95 @@ export const POSBillingStation: React.FC = () => {
     e.preventDefault();
     processSingleBarcode(barcodeInput);
   };
+
+  // Real-time Supabase Broadcast connection for wireless mobile barcode scanning
+  const [isPairModalOpen, setIsPairModalOpen] = useState(false);
+  const [isMobileCompanionOpen, setIsMobileCompanionOpen] = useState(false);
+  const [mobileScanNotice, setMobileScanNotice] = useState<{
+    text: string;
+    code: string;
+    productName?: string;
+    timestamp: number;
+  } | null>(null);
+
+  const {
+    isConnected: isRealtimeConnected,
+    activeDevices,
+    latencyMs,
+    sendTestChime,
+    broadcastScanAck,
+    broadcastCatalogSync,
+    broadcastCartSync,
+    broadcastQuantityUpdate,
+    broadcastRemoveItem,
+    broadcastClearCart,
+    broadcastCustomerSync,
+    broadcastDisconnect,
+  } = usePOSRealtimeBroadcast({
+    shopCode: activeShopCode || shopProfile.shopCode || 'SHOP-01',
+    role: 'DESKTOP_POS',
+    onRequestCatalogSyncReceived: () => {
+      if (products.length > 0) {
+        broadcastCatalogSync(products);
+      }
+    },
+    onBarcodeReceived: (payload) => {
+      const ackResult = processSingleBarcode(payload.barcode);
+      // Send immediate ACK back to the mobile phone scanner with exact matched product & rate
+      broadcastScanAck({
+        barcode: payload.barcode,
+        status: ackResult.status,
+        product: ackResult.product,
+        unitPrice: ackResult.unitPrice,
+        unitType: ackResult.unitType,
+        unitName: ackResult.unitName,
+        quantity: 1,
+        targetDeviceId: payload.deviceId,
+      });
+
+      const productName = ackResult.product?.name || payload.productName;
+      setMobileScanNotice({
+        text: productName
+          ? `📱 ${payload.deviceName}: Scanned "${productName}"`
+          : `📱 ${payload.deviceName}: Scanned Barcode [${payload.barcode}]`,
+        code: payload.barcode,
+        productName: productName,
+        timestamp: Date.now(),
+      });
+      setTimeout(() => {
+        setMobileScanNotice((prev) => (prev && prev.timestamp === payload.timestamp ? null : prev));
+      }, 4500);
+    },
+    onCartSyncReceived: (payload) => {
+      if (Array.isArray(payload.cart)) {
+        setPosCart(payload.cart);
+      }
+      if (payload.customerName !== undefined) setCustomerName(payload.customerName);
+      if (payload.customerPhone !== undefined) setCustomerPhone(payload.customerPhone);
+      if (payload.discount !== undefined) setDiscountInput(payload.discount);
+    },
+    onQuantityUpdateReceived: (payload) => {
+      updateCartQuantity(payload.productId, payload.quantity, payload.selectedUnit);
+    },
+    onRemoveItemReceived: (payload) => {
+      removeFromCart(payload.productId, payload.selectedUnit);
+    },
+    onClearCartReceived: () => {
+      clearCart();
+    },
+    onCustomerSyncReceived: (payload) => {
+      if (payload.customerName !== undefined) setCustomerName(payload.customerName);
+      if (payload.customerPhone !== undefined) setCustomerPhone(payload.customerPhone);
+      if (payload.discount !== undefined) setDiscountInput(payload.discount);
+    },
+  });
+
+  // Automatically broadcast catalog to mobile devices when products change or connection is ready
+  useEffect(() => {
+    if (isRealtimeConnected && products.length > 0) {
+      broadcastCatalogSync(products);
+    }
+  }, [isRealtimeConnected, products, broadcastCatalogSync]);
 
   // Cart Calculations
   const cartSubtotal = posCart.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -532,6 +737,20 @@ export const POSBillingStation: React.FC = () => {
   }, [posCart]);
 
   const cartEstimatedProfit = cartNetTotal - cartTotalCost;
+
+  // Filtered cart items for fullscreen cart search
+  const filteredFullscreenCart = useMemo(() => {
+    if (!fullscreenCartSearch.trim()) return posCart;
+    const q = fullscreenCartSearch.toLowerCase().trim();
+    return posCart.filter(
+      (item) =>
+        item.product.name.toLowerCase().includes(q) ||
+        (item.product.barcode && item.product.barcode.toLowerCase().includes(q)) ||
+        (item.product.sku && item.product.sku.toLowerCase().includes(q)) ||
+        (item.product.category && item.product.category.toLowerCase().includes(q)) ||
+        (item.unitName && item.unitName.toLowerCase().includes(q))
+    );
+  }, [posCart, fullscreenCartSearch]);
 
   // Open Checkout Modal
   const openCheckout = () => {
@@ -683,14 +902,25 @@ export const POSBillingStation: React.FC = () => {
             </span>
           )}
         </button>
+
+        {posCart.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setIsCartFullscreenOpen(true)}
+            className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 shrink-0 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition shadow-2xs"
+            title="Expand Full Screen Cart"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {/* LEFT COLUMN: Product Catalog & Barcode Station (65% desktop) */}
       <div className={`flex-1 min-h-0 flex-col gap-2 lg:gap-4 min-w-0 overflow-hidden ${mobileTab === 'PRODUCTS' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Top Search & Express Barcode Scanner Bar */}
-        <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-center justify-between">
+        <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 lg:flex-row lg:items-center justify-between">
           {/* Text Search */}
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
@@ -701,42 +931,88 @@ export const POSBillingStation: React.FC = () => {
             />
           </div>
 
-          {/* Express Barcode Scanner Form & Camera Scanner Button */}
-          <form onSubmit={handleBarcodeSubmit} className="flex items-center gap-2">
-            <div className="relative">
-              <Barcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-indigo-500" />
-              <input
-                type="text"
-                value={barcodeInput}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setBarcodeInput(val);
-                  // Auto detect 13-digit EAN/UPC/GTIN barcode
-                  if (/^\d{13}$/.test(val.trim())) {
-                    processSingleBarcode(val.trim());
-                  }
-                }}
-                placeholder="Scan / Enter Barcode SKU..."
-                className="w-32 sm:w-44 rounded-xl border border-indigo-200 bg-indigo-50/50 pl-9 pr-3 py-2 text-xs font-mono font-semibold text-indigo-900 outline-none transition focus:border-indigo-600 focus:bg-white dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-200"
-              />
+          {/* Express Barcode Scanner Form & Camera Scanner Button & Mobile Wireless Gun Pairing */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <form onSubmit={handleBarcodeSubmit} className="flex items-center gap-2">
+              <div className="relative">
+                <Barcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-indigo-500" />
+                <input
+                  type="text"
+                  value={barcodeInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setBarcodeInput(val);
+                    // Auto detect 13-digit EAN/UPC/GTIN barcode
+                    if (/^\d{13}$/.test(val.trim())) {
+                      processSingleBarcode(val.trim());
+                    }
+                  }}
+                  placeholder="Scan / Enter Barcode SKU..."
+                  className="w-32 sm:w-44 rounded-xl border border-indigo-200 bg-indigo-50/50 pl-9 pr-3 py-2 text-xs font-mono font-semibold text-indigo-900 outline-none transition focus:border-indigo-600 focus:bg-white dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-200"
+                />
+              </div>
+              <button
+                type="submit"
+                className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 shrink-0 cursor-pointer"
+                title="Add scanned item"
+              >
+                Scan
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsCameraScannerOpen(true)}
+                className="flex items-center gap-1 rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white shadow-xs hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 shrink-0 transition active:scale-95 cursor-pointer"
+                title="Scan with webcam / camera"
+              >
+                <Camera className="h-3.5 w-3.5 text-indigo-400" />
+                <span className="hidden sm:inline">Camera</span>
+              </button>
+            </form>
+
+            {/* Live Mobile Barcode Scanner Pairing & Disconnect Button (Supabase Realtime) - Only for Desktop / Web View */}
+            <div className="hidden md:flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setIsPairModalOpen(true)}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-extrabold transition active:scale-95 cursor-pointer shrink-0 border ${
+                  activeDevices.some((d) => d.role === 'MOBILE_SCANNER')
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700 shadow-xs'
+                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800 hover:bg-indigo-100'
+                }`}
+                title="Pair Phone as Wireless Laser Barcode Gun via Supabase Realtime Broadcast"
+                id="pair-mobile-scanner-btn"
+              >
+                <span className="flex h-2 w-2 relative shrink-0">
+                  {isRealtimeConnected && (
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  )}
+                  <span
+                    className={`relative inline-flex rounded-full h-2 w-2 ${
+                      isRealtimeConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                    }`}
+                  ></span>
+                </span>
+                <Smartphone className="h-3.5 w-3.5 shrink-0" />
+                <span className="whitespace-nowrap">
+                  {activeDevices.some((d) => d.role === 'MOBILE_SCANNER')
+                    ? `Phone Synced (${activeDevices.filter((d) => d.role === 'MOBILE_SCANNER').length})`
+                    : 'Pair Phone Scanner'}
+                </span>
+              </button>
+
+              {activeDevices.some((d) => d.role === 'MOBILE_SCANNER') && (
+                <button
+                  type="button"
+                  onClick={() => broadcastDisconnect(undefined, 'Cashier disconnected mobile scanner from POS')}
+                  className="flex items-center gap-1 rounded-xl bg-red-50 hover:bg-red-100 dark:bg-red-950/50 dark:hover:bg-red-900/60 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 px-2 py-2 text-xs font-bold transition active:scale-95 cursor-pointer shadow-xs"
+                  title="Disconnect phone scanner to avoid unnecessary scans"
+                >
+                  <PowerOff className="h-3.5 w-3.5" />
+                  <span className="hidden lg:inline">Disconnect</span>
+                </button>
+              )}
             </div>
-            <button
-              type="submit"
-              className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 shrink-0"
-              title="Add scanned item"
-            >
-              Scan
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsCameraScannerOpen(true)}
-              className="flex items-center gap-1 rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white shadow-xs hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 shrink-0 transition active:scale-95"
-              title="Scan with camera"
-            >
-              <Camera className="h-3.5 w-3.5 text-indigo-400" />
-              <span className="hidden sm:inline">Camera</span>
-            </button>
-          </form>
+          </div>
         </div>
 
         {/* Categories horizontal filter */}
@@ -1029,21 +1305,34 @@ export const POSBillingStation: React.FC = () => {
         </div>
 
         {/* Cart Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 shrink-0">
+        <div className="flex items-center justify-between border-b border-slate-200 px-3 sm:px-4 py-2.5 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 shrink-0">
           <div className="flex items-center gap-2">
             <ShoppingCart className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
             <h3 className="font-bold text-slate-900 dark:text-slate-100 text-xs">
               Items in Cart ({totalCartItems})
             </h3>
           </div>
-          {posCart.length > 0 && (
-            <button
-              onClick={clearCart}
-              className="text-[11px] font-bold text-red-500 hover:text-red-700 dark:text-red-400 transition"
-            >
-              Clear Cart
-            </button>
-          )}
+          <div className="flex items-center gap-1.5">
+            {posCart.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsCartFullscreenOpen(true)}
+                className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 rounded-lg border border-indigo-200 dark:border-indigo-800 transition shadow-2xs cursor-pointer"
+                title="Expand Cart to Full Screen to view, search, and edit all items"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+                <span>Full Screen</span>
+              </button>
+            )}
+            {posCart.length > 0 && (
+              <button
+                onClick={clearCart}
+                className="text-[11px] font-bold text-red-500 hover:text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-1 rounded-lg transition cursor-pointer"
+              >
+                Clear Cart
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Cart Itemized List */}
@@ -1096,9 +1385,19 @@ export const POSBillingStation: React.FC = () => {
                     >
                       <Minus className="h-3 w-3" />
                     </button>
-                    <span className="w-7 text-center font-mono font-extrabold text-xs text-slate-900 dark:text-slate-100">
-                      {item.quantity}
-                    </span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={item.quantity}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        if (!isNaN(val)) {
+                          updateCartQuantity(item.product.id, Math.max(1, val), item.selectedUnit);
+                        }
+                      }}
+                      className="w-8 text-center font-mono font-extrabold text-xs text-slate-900 dark:text-slate-100 bg-transparent border-none outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      title="Direct edit quantity"
+                    />
                     <button
                       type="button"
                       onClick={() => updateCartQuantity(item.product.id, item.quantity + 1, item.selectedUnit)}
@@ -1662,172 +1961,763 @@ export const POSBillingStation: React.FC = () => {
         isOpen={isCameraScannerOpen}
         onClose={() => setIsCameraScannerOpen(false)}
         onScanSuccess={(scannedCode) => {
-          const cleanCode = scannedCode.trim().toLowerCase();
+          const cleanCode = scannedCode.trim();
+          const matched = findProductAndUnitByBarcode(products, cleanCode);
 
-          const primaryMatched = products.find(
-            (p) =>
-              p.barcode.toLowerCase() === cleanCode ||
-              p.sku.toLowerCase() === cleanCode ||
-              p.id.toLowerCase() === cleanCode
-          );
-
-          if (primaryMatched) {
-            addToCart(primaryMatched, 1, 'PRIMARY');
-            return;
-          }
-
-          const cartonMatched = products.find(
-            (p) =>
-              (p.cartonBarcode && p.cartonBarcode.toLowerCase() === cleanCode) ||
-              (p.unit.secondaryBarcode && p.unit.secondaryBarcode.toLowerCase() === cleanCode)
-          );
-
-          if (cartonMatched) {
-            addToCart(cartonMatched, 1, 'SECONDARY');
+          if (matched) {
+            addToCart(matched.product, 1, matched.unitType);
             return;
           }
 
           // Unstocked barcode scanned! Open Quick Add modal
-          handleUnstockedBarcode(scannedCode.trim());
+          handleUnstockedBarcode(cleanCode);
         }}
         title="Scan Barcode to Add to Cart"
       />
 
       {/* QUICK ADD UNSTOCKED PRODUCT MODAL */}
       {isQuickAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-xs overflow-y-auto">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl dark:bg-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-800 my-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0">
                   <Barcode className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">Unstocked Barcode Scanned</h3>
-                  <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">Quick add to inventory & sell immediately</p>
+                  <h3 className="font-extrabold text-base text-slate-900 dark:text-slate-100">Unstocked Barcode Scanned</h3>
+                  <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">Quick register item & supplier details to sell immediately</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsQuickAddModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveQuickAddProduct} className="mt-4 space-y-3.5">
-              <div className="rounded-xl bg-amber-50 dark:bg-amber-950/40 p-3 border border-amber-200 dark:border-amber-900/50 text-xs">
-                <span className="font-bold text-amber-900 dark:text-amber-200">Scanned Barcode: </span>
-                <span className="font-mono font-extrabold text-indigo-700 dark:text-indigo-300 bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-amber-300 dark:border-amber-800">
-                  {quickAddBarcode}
+            <form onSubmit={handleSaveQuickAddProduct} className="mt-4 space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+              <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/40 p-3 border border-amber-200 dark:border-amber-900/50 text-xs flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-amber-900 dark:text-amber-200">Scanned Barcode: </span>
+                  <span className="font-mono font-black text-indigo-700 dark:text-indigo-300 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-amber-300 dark:border-amber-800 ml-1.5 shadow-xs">
+                    {quickAddBarcode}
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded-full">
+                  New Item
                 </span>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Product / Item Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={quickAddName}
-                  onChange={(e) => setQuickAddName(e.target.value)}
-                  placeholder="e.g. Current Biscuits / Wai Wai Noodles"
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  autoFocus
-                />
-              </div>
+              {/* 1. Item Information */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                  <Package className="h-3.5 w-3.5 text-indigo-500" />
+                  <span>Item & Pricing Details</span>
+                </h4>
 
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Selling Price (NPR) <span className="text-red-500">*</span>
+                    Product / Item Name <span className="text-red-500">*</span>
                   </label>
                   <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    required
-                    value={quickAddSellingPrice}
-                    onChange={(e) => setQuickAddSellingPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="e.g. 50"
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-indigo-700 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-indigo-300"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Cost Price (NPR)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={quickAddCostPrice}
-                    onChange={(e) => setQuickAddCostPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="e.g. 40 (Optional)"
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <div className="col-span-1">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Unit</label>
-                  <select
-                    value={quickAddUnit}
-                    onChange={(e) => setQuickAddUnit(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <option value="Packet">Packet</option>
-                    <option value="Pcs">Pcs</option>
-                    <option value="Bottle">Bottle</option>
-                    <option value="Kg">Kg</option>
-                    <option value="Box">Box</option>
-                  </select>
-                </div>
-
-                <div className="col-span-1">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Category</label>
-                  <input
                     type="text"
-                    value={quickAddCategory}
-                    onChange={(e) => setQuickAddCategory(e.target.value)}
-                    placeholder="General"
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    required
+                    value={quickAddName}
+                    onChange={(e) => setQuickAddName(e.target.value)}
+                    placeholder="e.g. Current Biscuits / Wai Wai Noodles"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    autoFocus
                   />
                 </div>
 
-                <div className="col-span-1">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Initial Stock</label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={quickAddStockQty}
-                    onChange={(e) => setQuickAddStockQty(Math.max(1, Number(e.target.value)))}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Selling Price (NPR) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      required
+                      value={quickAddSellingPrice}
+                      onChange={(e) => setQuickAddSellingPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      placeholder="e.g. 50"
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-black text-indigo-700 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-indigo-300"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Purchase / Cost Price (NPR)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={quickAddCostPrice}
+                      onChange={(e) => setQuickAddCostPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      placeholder="e.g. 40 (Optional)"
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-1">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Unit</label>
+                    <select
+                      value={quickAddUnit}
+                      onChange={(e) => setQuickAddUnit(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    >
+                      <option value="Packet">Packet</option>
+                      <option value="Pcs">Pcs</option>
+                      <option value="Bottle">Bottle</option>
+                      <option value="Kg">Kg</option>
+                      <option value="Box">Box</option>
+                      <option value="Litre">Litre</option>
+                      <option value="Dozen">Dozen</option>
+                    </select>
+                  </div>
+
+                  <div className="col-span-1">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Category</label>
+                    <input
+                      type="text"
+                      value={quickAddCategory}
+                      onChange={(e) => setQuickAddCategory(e.target.value)}
+                      placeholder="General"
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-medium text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+
+                  <div className="col-span-1">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Initial Stock</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={quickAddStockQty}
+                      onChange={(e) => setQuickAddStockQty(Math.max(1, Number(e.target.value)))}
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-2 py-2 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-3">
+              {/* 2. Supplier & Purchase Source Details */}
+              <div className="space-y-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                    <Truck className="h-3.5 w-3.5 text-indigo-500" />
+                    <span>Supplier & Purchase Source</span>
+                  </h4>
+                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">
+                    Auto-recorded in Supplier List
+                  </span>
+                </div>
+
+                {/* Mode Selector */}
+                <div className="flex items-center rounded-xl bg-slate-100 p-1 dark:bg-slate-800 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickAddSupplierMode('EXISTING');
+                      if (suppliers.length > 0 && !quickAddSupplierId) {
+                        setQuickAddSupplierId(suppliers[0].id);
+                        setQuickAddSupplierName(suppliers[0].name);
+                        setQuickAddSupplierPhone(suppliers[0].phone || '');
+                      }
+                    }}
+                    className={`flex-1 rounded-lg py-1.5 font-bold transition cursor-pointer ${
+                      quickAddSupplierMode === 'EXISTING'
+                        ? 'bg-white text-indigo-600 shadow-xs dark:bg-slate-900 dark:text-indigo-300'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    Select Existing ({suppliers.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickAddSupplierMode('NEW');
+                      setQuickAddSupplierId('');
+                    }}
+                    className={`flex-1 rounded-lg py-1.5 font-bold transition cursor-pointer ${
+                      quickAddSupplierMode === 'NEW'
+                        ? 'bg-white text-indigo-600 shadow-xs dark:bg-slate-900 dark:text-indigo-300'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    + Register New Supplier
+                  </button>
+                </div>
+
+                {quickAddSupplierMode === 'EXISTING' ? (
+                  suppliers.length > 0 ? (
+                    <div className="space-y-2">
+                      <div>
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Choose Supplier</label>
+                        <select
+                          value={quickAddSupplierId}
+                          onChange={(e) => {
+                            const found = suppliers.find((s) => s.id === e.target.value);
+                            setQuickAddSupplierId(e.target.value);
+                            if (found) {
+                              setQuickAddSupplierName(found.name);
+                              setQuickAddSupplierPhone(found.phone || '');
+                            }
+                          }}
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        >
+                          {suppliers.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} {s.phone ? `(${s.phone})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {quickAddSupplierPhone && (
+                        <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 dark:bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                          <Phone className="h-3 w-3 text-indigo-500" />
+                          <span>Supplier Contact: <strong className="text-slate-700 dark:text-slate-300">{quickAddSupplierPhone}</strong></span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl bg-amber-50 dark:bg-amber-950/40 p-3 border border-amber-200 dark:border-amber-900/50 text-xs text-amber-800 dark:text-amber-200">
+                      No suppliers registered yet. Please click &quot;Register New Supplier&quot; above to record the supplier.
+                    </div>
+                  )
+                ) : (
+                  <div className="space-y-2.5 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl border border-slate-200 dark:border-slate-700">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Supplier / Vendor Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={quickAddSupplierName}
+                        onChange={(e) => setQuickAddSupplierName(e.target.value)}
+                        placeholder="e.g. Himalayan Wholesale Distributors"
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Contact / Phone</label>
+                        <input
+                          type="text"
+                          value={quickAddSupplierPhone}
+                          onChange={(e) => setQuickAddSupplierPhone(e.target.value)}
+                          placeholder="e.g. 9801234567"
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">PAN / VAT No.</label>
+                        <input
+                          type="text"
+                          value={quickAddSupplierPan}
+                          onChange={(e) => setQuickAddSupplierPan(e.target.value)}
+                          placeholder="Optional"
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300">Address / City</label>
+                      <input
+                        type="text"
+                        value={quickAddSupplierAddress}
+                        onChange={(e) => setQuickAddSupplierAddress(e.target.value)}
+                        placeholder="e.g. New Road, Kathmandu"
+                        className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-900 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Purchase Payment Status for Initial Stock */}
+                <div className="pt-1">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
+                    Supplier Payment for this Stock:
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQuickAddPaidStatus('PAID')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                        quickAddPaidStatus === 'PAID'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700 shadow-xs'
+                          : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                      }`}
+                    >
+                      <CheckCircle className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span>Paid (Cash / Bank)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setQuickAddPaidStatus('CREDIT')}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                        quickAddPaidStatus === 'CREDIT'
+                          ? 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700 shadow-xs'
+                          : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400'
+                      }`}
+                    >
+                      <Clock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                      <span>Supplier Credit (Udharo)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setIsQuickAddModalOpen(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-5 py-2 text-xs font-bold text-white hover:bg-indigo-700 transition shadow-md"
+                  className="flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 px-5 py-2.5 text-xs font-bold text-white transition shadow-md shadow-indigo-600/30 cursor-pointer"
                 >
                   <CheckCircle className="h-4 w-4" />
-                  <span>Save Product & Add to Cart</span>
+                  <span>Register & Add to Cart</span>
                 </button>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {/* FULLSCREEN CART PRODUCTS OVERVIEW MODAL */}
+      {isCartFullscreenOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-2 sm:p-4 md:p-6 animate-in fade-in duration-150">
+          <div className="flex flex-col h-[94vh] w-full max-w-6xl rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/80 px-4 sm:px-6 py-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-md shadow-indigo-600/20 shrink-0">
+                  <ShoppingCart className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-extrabold text-base sm:text-lg text-slate-900 dark:text-slate-100">
+                      Cart Products (Full Screen)
+                    </h3>
+                    <span className="rounded-full bg-indigo-100 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800 px-2.5 py-0.5 text-xs font-bold text-indigo-700 dark:text-indigo-300">
+                      {posCart.length} item{posCart.length === 1 ? '' : 's'} • {totalCartItems} total qty
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Spacious view to see all cart items, edit quantities directly, remove products, and proceed to checkout
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-end sm:self-center">
+                {/* Real-time search inside cart */}
+                <div className="relative min-w-[170px] sm:min-w-[240px]">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={fullscreenCartSearch}
+                    onChange={(e) => setFullscreenCartSearch(e.target.value)}
+                    placeholder="Search in cart..."
+                    className="w-full rounded-xl border border-slate-200 bg-white pl-8 pr-7 py-1.5 text-xs font-medium text-slate-900 placeholder:text-slate-400 outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                  {fullscreenCartSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setFullscreenCartSearch('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {posCart.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('Are you sure you want to clear all products from the cart?')) {
+                        clearCart();
+                        setIsCartFullscreenOpen(false);
+                      }
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-xl border border-red-200 dark:border-red-900/60 transition cursor-pointer"
+                    title="Clear All Cart Items"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Clear All</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setIsCartFullscreenOpen(false)}
+                  className="p-2 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-800 transition cursor-pointer"
+                  title="Close Full Screen Cart (Esc)"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body / Products Table */}
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 bg-slate-50/50 dark:bg-slate-950/40">
+              {posCart.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center p-8">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-100 dark:bg-slate-800 text-slate-400 mb-3">
+                    <ShoppingCart className="h-8 w-8 text-slate-300 dark:text-slate-700" />
+                  </div>
+                  <h4 className="text-base font-bold text-slate-800 dark:text-slate-200">Cart is Empty</h4>
+                  <p className="text-xs text-slate-500 max-w-sm mt-1">
+                    No products added to the current bill yet. Scan barcodes or select items from catalog to start billing.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsCartFullscreenOpen(false)}
+                    className="mt-4 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-indigo-700 transition cursor-pointer"
+                  >
+                    <Barcode className="h-4 w-4" />
+                    <span>Return to Catalog & Scan</span>
+                  </button>
+                </div>
+              ) : filteredFullscreenCart.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full min-h-[220px] text-center p-6 text-slate-400">
+                  <Search className="h-8 w-8 text-slate-300 dark:text-slate-700 mb-2" />
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-300">No matching items found in cart</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Try searching with a different term.</p>
+                  <button
+                    type="button"
+                    onClick={() => setFullscreenCartSearch('')}
+                    className="mt-3 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                  >
+                    Clear Search Filter
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Desktop / Tablet High Density Table View */}
+                  <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-100/80 dark:bg-slate-800/70 text-slate-600 dark:text-slate-400 font-bold uppercase tracking-wider text-[11px]">
+                          <th className="py-3 px-4 w-12 text-center">#</th>
+                          <th className="py-3 px-4">Product Details</th>
+                          <th className="py-3 px-4 w-28 text-center">Unit</th>
+                          <th className="py-3 px-4 w-32 text-right">Unit Price</th>
+                          <th className="py-3 px-4 w-48 text-center">Quantity (Editable)</th>
+                          <th className="py-3 px-4 w-36 text-right">Subtotal</th>
+                          <th className="py-3 px-4 w-20 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800/70">
+                        {filteredFullscreenCart.map((item, idx) => (
+                          <tr
+                            key={`${item.product.id}-${item.selectedUnit}-${idx}`}
+                            className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition group"
+                          >
+                            <td className="py-3 px-4 text-center font-mono font-bold text-slate-400">
+                              {idx + 1}
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="flex flex-col">
+                                <span className="font-extrabold text-sm text-slate-900 dark:text-slate-100">
+                                  {item.product.name}
+                                </span>
+                                <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-500 flex-wrap">
+                                  {item.product.category && (
+                                    <span className="rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.2 font-semibold text-slate-600 dark:text-slate-400">
+                                      {item.product.category}
+                                    </span>
+                                  )}
+                                  {item.product.barcode && (
+                                    <span className="font-mono text-slate-400 flex items-center gap-1">
+                                      <Barcode className="h-3 w-3" /> {item.product.barcode}
+                                    </span>
+                                  )}
+                                  {item.product.currentStock !== undefined && (
+                                    <span className="text-slate-400">
+                                      In Stock: {item.product.currentStock}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <span className="inline-block rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/80 dark:border-indigo-800/60 px-2 py-0.5 font-bold text-indigo-700 dark:text-indigo-300">
+                                {item.unitName}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-slate-800 dark:text-slate-200">
+                              NPR {item.unitPrice.toLocaleString()}
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="flex items-center justify-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-xl p-1 border border-slate-200 dark:border-slate-700/80 w-fit mx-auto shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={() => updateCartQuantity(item.product.id, item.quantity - 1, item.selectedUnit)}
+                                  className="p-1.5 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 transition cursor-pointer"
+                                  title="Decrease quantity"
+                                >
+                                  <Minus className="h-3.5 w-3.5" />
+                                </button>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value, 10);
+                                    if (!isNaN(val)) {
+                                      updateCartQuantity(item.product.id, Math.max(1, val), item.selectedUnit);
+                                    }
+                                  }}
+                                  className="w-14 text-center font-mono font-black text-sm bg-transparent text-slate-900 dark:text-slate-100 outline-none border-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                  title="Click and type exact quantity directly"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => updateCartQuantity(item.product.id, item.quantity + 1, item.selectedUnit)}
+                                  className="p-1.5 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-200 dark:hover:bg-slate-700 active:scale-95 transition cursor-pointer"
+                                  title="Increase quantity"
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-extrabold text-sm text-indigo-600 dark:text-indigo-400">
+                              NPR {item.totalPrice.toLocaleString()}
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeFromCart(item.product.id, item.selectedUnit)}
+                                className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-xl transition cursor-pointer"
+                                title="Remove item from cart"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile Cards View (< md) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:hidden">
+                    {filteredFullscreenCart.map((item, idx) => (
+                      <div
+                        key={`${item.product.id}-${item.selectedUnit}-${idx}`}
+                        className="flex flex-col gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 shadow-xs"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
+                                #{idx + 1}
+                              </span>
+                              {item.product.category && (
+                                <span className="rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.2 text-[10px] font-semibold text-slate-600 dark:text-slate-400">
+                                  {item.product.category}
+                                </span>
+                              )}
+                            </div>
+                            <h4 className="font-extrabold text-sm text-slate-900 dark:text-slate-100 line-clamp-2 mt-0.5">
+                              {item.product.name}
+                            </h4>
+                            <div className="flex items-center gap-2 text-xs text-slate-500 mt-1">
+                              <span className="rounded-md bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 px-1.5 py-0.2 font-bold text-indigo-700 dark:text-indigo-300">
+                                {item.unitName}
+                              </span>
+                              <span>• NPR {item.unitPrice.toLocaleString()}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeFromCart(item.product.id, item.selectedUnit)}
+                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-xl transition cursor-pointer shrink-0"
+                            title="Remove product"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                          {/* Quantity control with direct input */}
+                          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl p-1 border border-slate-200 dark:border-slate-700">
+                            <button
+                              type="button"
+                              onClick={() => updateCartQuantity(item.product.id, item.quantity - 1, item.selectedUnit)}
+                              className="p-1.5 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-200 active:scale-95 transition cursor-pointer"
+                              title="Decrease"
+                            >
+                              <Minus className="h-3.5 w-3.5" />
+                            </button>
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.quantity}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                if (!isNaN(val)) {
+                                  updateCartQuantity(item.product.id, Math.max(1, val), item.selectedUnit);
+                                }
+                              }}
+                              className="w-12 text-center font-mono font-black text-sm bg-transparent text-slate-900 dark:text-slate-100 outline-none"
+                              title="Type quantity"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateCartQuantity(item.product.id, item.quantity + 1, item.selectedUnit)}
+                              className="p-1.5 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-200 active:scale-95 transition cursor-pointer"
+                              title="Increase"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Subtotal</span>
+                            <span className="font-extrabold font-mono text-sm text-indigo-600 dark:text-indigo-400">
+                              NPR {item.totalPrice.toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Summary & Checkout Bar */}
+            <div className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 sm:p-5 shrink-0 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-6 shadow-lg">
+              {/* Financial Breakdown */}
+              <div className="flex items-center gap-3 sm:gap-6 text-xs flex-wrap">
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400 block text-[10px] sm:text-[11px]">Subtotal</span>
+                  <span className="font-bold font-mono text-slate-900 dark:text-slate-100 text-xs sm:text-sm">
+                    NPR {cartSubtotal.toLocaleString()}
+                  </span>
+                </div>
+                {discountInput > 0 && (
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400 block text-[10px] sm:text-[11px]">Discount</span>
+                    <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400 text-xs sm:text-sm">
+                      - NPR {discountInput.toLocaleString()}
+                    </span>
+                  </div>
+                )}
+                {cartTax > 0 && (
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400 block text-[10px] sm:text-[11px]">VAT ({shopProfile.vatRate}%)</span>
+                    <span className="font-bold font-mono text-slate-900 dark:text-slate-100 text-xs sm:text-sm">
+                      + NPR {cartTax.toLocaleString()}
+                    </span>
+                  </div>
+                )}
+                <div className="border-l border-slate-200 dark:border-slate-700 pl-3 sm:pl-4">
+                  <span className="text-slate-500 dark:text-slate-400 block text-[10px] sm:text-[11px] font-bold">Net Total</span>
+                  <span className="text-sm sm:text-xl font-black font-mono text-indigo-600 dark:text-indigo-400">
+                    NPR {cartNetTotal.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCartFullscreenOpen(false)}
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                >
+                  <Barcode className="h-4 w-4" />
+                  <span>Scan More</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={posCart.length === 0}
+                  onClick={() => {
+                    setIsCartFullscreenOpen(false);
+                    openCheckout();
+                  }}
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] px-5 sm:px-6 py-2.5 text-xs sm:text-sm font-extrabold text-white shadow-md transition disabled:bg-slate-300 dark:disabled:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  <span>Proceed to Checkout</span>
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* FLOATING REAL-TIME SCAN NOTIFICATION BANNER */}
+      {mobileScanNotice && (
+        <div className="fixed top-18 right-4 sm:right-6 z-50 animate-in fade-in slide-in-from-top-3 duration-200 max-w-sm">
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-950/95 border-2 border-emerald-500 p-3.5 text-white shadow-2xl backdrop-blur-md">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="font-extrabold text-xs text-white truncate">{mobileScanNotice.text}</p>
+                <p className="text-[10px] text-emerald-300 font-mono">
+                  Live Barcode Scan via Supabase Realtime
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMobileScanNotice(null)}
+              className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* PAIR MOBILE SCANNER MODAL */}
+      <PairMobileScannerModal
+        isOpen={isPairModalOpen}
+        onClose={() => setIsPairModalOpen(false)}
+        shopCode={activeShopCode || shopProfile.shopCode || 'SHOP-01'}
+        shopName={activeShopName || shopProfile.shopName || 'Retail Store'}
+        isConnected={isRealtimeConnected}
+        activeDevices={activeDevices}
+        latencyMs={latencyMs}
+        onSendTestPing={sendTestChime}
+        onOpenLocalScanner={() => {
+          setIsPairModalOpen(false);
+          setIsMobileCompanionOpen(true);
+        }}
+        onDisconnectDevice={(targetDeviceId) =>
+          broadcastDisconnect(targetDeviceId, 'Cashier disconnected mobile scanner')
+        }
+        onDisconnectAll={() =>
+          broadcastDisconnect(undefined, 'Cashier disconnected all mobile scanners')
+        }
+      />
+
+      {/* MOBILE SCANNER COMPANION MODAL */}
+      {isMobileCompanionOpen && (
+        <MobileScannerCompanion
+          onClose={() => setIsMobileCompanionOpen(false)}
+          shopCodeParam={activeShopCode || shopProfile.shopCode}
+          shopNameParam={activeShopName || shopProfile.shopName}
+        />
       )}
     </div>
   );
